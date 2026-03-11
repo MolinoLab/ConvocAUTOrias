@@ -1,0 +1,15 @@
+# Credenciales y secretos
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+
+# Base de datos
+*.db

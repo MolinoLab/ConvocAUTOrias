@@ -1,0 +1,41 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: convocauto-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+  bot:
+    build: .
+    image: convocauto-bot:latest
+    container_name: convocauto-bot
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    volumes:
+      - .:/app
+      - ./convocatorias.csv:/app/convocatorias.csv
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: convocauto-bot:latest
+    container_name: convocauto-worker
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    volumes:
+      - .:/app
+      - ./convocatorias.csv:/app/convocatorias.csv
+    command: ["python", "-m", "scripts.worker_scraper"]
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
