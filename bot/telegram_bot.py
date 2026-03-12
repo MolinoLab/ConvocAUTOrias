@@ -1,11 +1,14 @@
 """
 Bot Telegram que recibe URLs y comandos.
-Comandos: /sube <url>, /listar, /revisar <id>, /ayuda.
+Comandos: /sube <url>, /idea <texto>, /listar, /revisar <id>, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
+import json
+import os
 import re
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +21,7 @@ from telegram.error import Conflict
 
 import config
 from src.db import Convocatoria, añadir, buscar_por_id, listar, actualizar
+from src.db_ideas import Idea, añadir_idea
 from src.scraper import extraer
 
 # Regex para detectar URLs
@@ -25,6 +29,8 @@ URL_PATTERN = re.compile(
     r"https?://[^\s]+",
     re.IGNORECASE,
 )
+
+_WHISPER_MODEL = None
 
 
 def _es_url(texto: str) -> bool:
@@ -40,14 +46,135 @@ def _generar_id(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
+def _generar_id_idea(texto: str) -> str:
+    base = f"{datetime.now().isoformat()}::{texto[:1000]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+def _resumen_simple(texto: str, max_len: int = 180) -> str:
+    limpio = " ".join(texto.split())
+    if not limpio:
+        return "Idea sin contenido"
+    return limpio[:max_len] + ("..." if len(limpio) > max_len else "")
+
+
+def _normalizar_lista(valor: object) -> str:
+    if isinstance(valor, list):
+        return ", ".join(str(x).strip() for x in valor if str(x).strip())
+    if isinstance(valor, str):
+        return valor.strip()
+    return ""
+
+
+def _extraer_metadatos_idea(texto: str) -> dict:
+    """
+    Extrae metadatos de una idea usando Ollama.
+    Siempre retorna claves: resumen, tags, categorias, presupuesto_aproximado.
+    """
+    defaults = {
+        "resumen": _resumen_simple(texto),
+        "tags": "",
+        "categorias": "",
+        "presupuesto_aproximado": "",
+    }
+    try:
+        import requests
+    except ImportError:
+        return defaults
+
+    prompt = f"""Analiza esta idea de proyecto y responde SOLO en JSON valido.
+
+Campos requeridos:
+- resumen: texto breve en espanol (maximo 220 caracteres)
+- tags: array de strings cortos
+- categorias: array de strings
+- presupuesto_aproximado: texto (ej. "15000-20000 EUR") o vacio si no hay datos
+
+Idea:
+\"\"\"{texto[:5000]}\"\"\"
+"""
+    try:
+        r = requests.post(
+            f"{config.OLLAMA_URL.rstrip('/')}/api/generate",
+            json={
+                "model": config.OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=90,
+        )
+        if r.status_code != 200:
+            return defaults
+        raw = (r.json().get("response") or "").strip()
+        inicio = raw.find("{")
+        fin = raw.rfind("}")
+        if inicio == -1 or fin == -1:
+            return defaults
+        payload = json.loads(raw[inicio:fin + 1])
+        return {
+            "resumen": str(payload.get("resumen") or defaults["resumen"]).strip(),
+            "tags": _normalizar_lista(payload.get("tags")),
+            "categorias": _normalizar_lista(payload.get("categorias")),
+            "presupuesto_aproximado": str(payload.get("presupuesto_aproximado") or "").strip(),
+        }
+    except Exception:
+        return defaults
+
+
+def _guardar_idea(texto: str, fuente: str) -> Idea:
+    idea_id = _generar_id_idea(texto)
+    metadatos = _extraer_metadatos_idea(texto)
+
+    config.CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
+    ruta_abs = config.CARPETA_IDEAS / f"{idea_id}.md"
+    try:
+        ruta_rel = ruta_abs.relative_to(config.DIR_PROYECTO).as_posix()
+    except Exception:
+        ruta_rel = str(ruta_abs)
+    ruta_abs.write_text(texto.strip() + "\n", encoding="utf-8")
+
+    idea = Idea(
+        id=idea_id,
+        resumen=metadatos["resumen"] or _resumen_simple(texto),
+        tags=metadatos["tags"],
+        categorias=metadatos["categorias"],
+        presupuesto_aproximado=metadatos["presupuesto_aproximado"],
+        ruta=ruta_rel.replace("\\", "/"),
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente=fuente,
+    )
+    añadir_idea(idea)
+    return idea
+
+
+def _transcribir_audio(ruta_audio: Path) -> str:
+    global _WHISPER_MODEL
+    try:
+        import whisper
+    except Exception as exc:
+        raise RuntimeError("No se pudo importar whisper. Instala openai-whisper y ffmpeg.") from exc
+
+    if _WHISPER_MODEL is None:
+        modelo = os.getenv("WHISPER_MODEL", "base").strip() or "base"
+        _WHISPER_MODEL = whisper.load_model(modelo)
+
+    resultado = _WHISPER_MODEL.transcribe(str(ruta_audio), language="es")
+    texto = (resultado.get("text") or "").strip()
+    if not texto:
+        raise RuntimeError("No se pudo extraer texto del audio.")
+    return texto
+
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
+        "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
         "/listar - Lista las convocatorias pendientes\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
         "/ayuda - Muestra esta ayuda\n\n"
-        "También puedes enviar una URL directamente para subirla."
+        "Tambien puedes enviar una URL directamente para subirla.\n"
+        "Si envias un audio, se tratara como idea automaticamente."
     )
 
 
@@ -75,6 +202,28 @@ async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if len(pendientes) > 15:
         lineas.append(f"\n... y {len(pendientes) - 15} más")
     await update.message.reply_text("\n\n".join(lineas))
+
+
+async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /idea <descripcion>\n"
+            "Ejemplo: /idea laboratorio artistico itinerante con impacto rural"
+        )
+        return
+    texto = " ".join(context.args).strip()
+    if not texto:
+        await update.message.reply_text("La idea no puede estar vacia.")
+        return
+
+    msg = await update.message.reply_text("Guardando idea...")
+    idea = _guardar_idea(texto, fuente="telegram_texto")
+    await msg.edit_text(
+        f"Idea guardada.\n"
+        f"ID: {idea.id}\n"
+        f"Resumen: {idea.resumen}\n"
+        f"Ruta: {idea.ruta}"
+    )
 
 
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -144,6 +293,56 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text("Envía una URL o usa /ayuda para ver comandos.")
 
 
+async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Procesa audios/voice como idea por defecto."""
+    mensaje = update.message
+    if not mensaje:
+        return
+
+    archivo = None
+    sufijo = ".ogg"
+    if mensaje.voice:
+        archivo = await context.bot.get_file(mensaje.voice.file_id)
+        sufijo = ".ogg"
+    elif mensaje.audio:
+        archivo = await context.bot.get_file(mensaje.audio.file_id)
+        mime = (mensaje.audio.mime_type or "").lower()
+        if "mpeg" in mime or "mp3" in mime:
+            sufijo = ".mp3"
+        elif "wav" in mime:
+            sufijo = ".wav"
+        else:
+            sufijo = ".m4a"
+
+    if archivo is None:
+        await mensaje.reply_text("No he podido leer el audio recibido.")
+        return
+
+    estado = await mensaje.reply_text("Procesando audio y transcribiendo...")
+    ruta_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=sufijo) as tmp:
+            ruta_tmp = Path(tmp.name)
+        await archivo.download_to_drive(custom_path=str(ruta_tmp))
+
+        texto = _transcribir_audio(ruta_tmp)
+        idea = _guardar_idea(texto, fuente="telegram_audio")
+        await estado.edit_text(
+            f"Idea guardada desde audio.\n"
+            f"ID: {idea.id}\n"
+            f"Resumen: {idea.resumen}\n"
+            f"Ruta: {idea.ruta}"
+        )
+    except Exception as exc:
+        await estado.edit_text(f"No se pudo procesar el audio: {exc}")
+    finally:
+        if ruta_tmp and ruta_tmp.exists():
+            try:
+                ruta_tmp.unlink()
+            except Exception:
+                pass
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Maneja errores no capturados, incluyendo Conflict por múltiples instancias."""
     import logging
@@ -167,8 +366,10 @@ def main() -> None:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(CommandHandler("sube", cmd_añadir))
+    app.add_handler(CommandHandler("idea", cmd_idea))
     app.add_handler(CommandHandler("listar", cmd_listar))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
     app.add_error_handler(error_handler)
 

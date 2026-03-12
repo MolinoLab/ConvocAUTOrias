@@ -16,3 +16,6 @@ uvicorn>=0.32.0
 
 # Utilidades
 python-dotenv>=1.0.0
+
+# Transcripcion de audio
+openai-whisper

@@ -2,6 +2,7 @@
 Carga variables de entorno para el sistema de autoconvocatorias.
 """
 import os
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -29,7 +30,23 @@ NEXTCLOUD_USER = os.getenv("NEXTCLOUD_USER", "")
 NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
 NEXTCLOUD_CARPETA = os.getenv("NEXTCLOUD_CARPETA", "Convocatorias")
 
-# Rutas del proyecto
-CSV_CONVOCATORIAS = DIR_PROYECTO / "convocatorias.csv"
-DB_SQLITE = DIR_PROYECTO / "convocatorias.db"
-CARPETA_IDEAS = DIR_PROYECTO / "ideas"
+# Rutas de datos (persistencia)
+_data_dir_env = os.getenv("DATA_DIR", "data").strip()
+DATA_DIR = Path(_data_dir_env) if _data_dir_env else DIR_PROYECTO / "data"
+if not DATA_DIR.is_absolute():
+    DATA_DIR = DIR_PROYECTO / DATA_DIR
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+CSV_CONVOCATORIAS = DATA_DIR / "convocatorias.csv"
+CSV_IDEAS = DATA_DIR / "ideas.csv"
+DB_SQLITE = DATA_DIR / "convocatorias.db"
+CARPETA_IDEAS = DATA_DIR / "ideas"
+CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
+
+# Migración ligera desde instalaciones previas (solo convocatorias.csv)
+_csv_legacy = DIR_PROYECTO / "convocatorias.csv"
+if not CSV_CONVOCATORIAS.exists() and _csv_legacy.exists():
+    try:
+        shutil.copy2(_csv_legacy, CSV_CONVOCATORIAS)
+    except Exception:
+        pass

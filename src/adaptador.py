@@ -1,5 +1,5 @@
 """
-Adapta ideas desde archivos .txt a borradores de proyecto para formularios.
+Adapta ideas desde el modelo hibrido (ideas.csv + ideas/*.md) a borradores.
 Modo plantilla (por defecto) o Ollama si está disponible.
 """
 import sys
@@ -8,16 +8,26 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
+from .db_ideas import leer_ideas
 
 
 def _cargar_ideas() -> str:
-    """Concatena el contenido de todos los .txt en ideas/."""
-    if not config.CARPETA_IDEAS.exists():
+    """Concatena ideas cargando el contenido desde rutas indexadas en ideas.csv."""
+    if not config.CSV_IDEAS.exists():
         return ""
+
     textos = []
-    for f in sorted(config.CARPETA_IDEAS.glob("*.txt")):
+    for idea in leer_ideas():
+        if not idea.ruta:
+            continue
         try:
-            textos.append(f.read_text(encoding="utf-8"))
+            ruta_abs = (config.DIR_PROYECTO / idea.ruta).resolve()
+            if not ruta_abs.exists():
+                continue
+            contenido = ruta_abs.read_text(encoding="utf-8").strip()
+            if not contenido:
+                continue
+            textos.append(f"# {idea.resumen or idea.id}\n{contenido}")
         except Exception:
             pass
     return "\n\n---\n\n".join(textos)
@@ -31,7 +41,7 @@ def _plantilla(convocatoria_titulo: str, convocatoria_descripcion: str, ideas: s
 {convocatoria_descripcion[:500] if convocatoria_descripcion else "[Sin descripción]"}
 
 ## Ideas del proyecto (desde ideas/)
-{ideas[:1000] if ideas else "[Añade archivos .txt en la carpeta ideas/]"}
+{ideas[:1000] if ideas else "[Añade ideas en data/ideas e indexalas en data/ideas.csv]"}
 
 ## Campos a rellenar
 - **Título del proyecto**: [PLACEHOLDER]

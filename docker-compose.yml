@@ -17,7 +17,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
     volumes:
       - .:/app
-      - ./convocatorias.csv:/app/convocatorias.csv
+      - convocauto_data:/app/data
     depends_on:
       - ollama
     restart: unless-stopped
@@ -31,7 +31,7 @@ services:
       - OLLAMA_URL=http://ollama:11434
     volumes:
       - .:/app
-      - ./convocatorias.csv:/app/convocatorias.csv
+      - convocauto_data:/app/data
     command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8888"]
     ports:
       - "8888:8888"
@@ -55,5 +55,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  convocauto_data:
   ollama_data:
   n8n_data:

@@ -14,6 +14,7 @@ Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API
 
 | Archivo | Descripción | Horario |
 |---------|-------------|---------|
+| `04-indexar-ideas.json` | Indexa ideas nuevas de `data/ideas/` hacia `data/ideas.csv` | Diario 8:00 |
 | `01-scraper-periodico.json` | Scraping y enriquecimiento con Ollama | Cada 6 horas |
 | `02-revisar-plazos.json` | Revisa plazos próximos y notifica por Telegram | Diario 9:00 |
 | `03-sync-caldav.json` | Sincroniza plazos con calendario CalDAV | Diario 9:15 |
