@@ -1,7 +1,12 @@
 """
 Worker que scrapea periódicamente las URLs de convocatorias y las enriquece con IA (Ollama).
 Actualiza título, descripción, plazo_fin y requisitos en la base de datos.
+
+Uso:
+  python -m scripts.worker_scraper        # Bucle infinito cada 6h
+  python -m scripts.worker_scraper --once # Un solo ciclo y termina (para n8n/cron)
 """
+import argparse
 import json
 import sys
 import time
@@ -95,6 +100,23 @@ def _ejecutar_ciclo() -> int:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Worker de scraping de convocatorias")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="Ejecutar un solo ciclo y terminar (para n8n/cron)",
+    )
+    args = parser.parse_args()
+
+    if args.once:
+        try:
+            n = _ejecutar_ciclo()
+            print(f"Ciclo completado. Actualizadas: {n}")
+        except Exception as e:
+            print(f"Error en ciclo: {e}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     intervalo_seg = INTERVALO_HORAS * 3600
     print(f"Worker iniciado. Scraping cada {INTERVALO_HORAS}h. Ctrl+C para detener.")
     while True:
