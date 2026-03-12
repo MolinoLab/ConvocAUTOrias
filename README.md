@@ -47,13 +47,14 @@ El stack incluye tres servicios:
 
 - **ollama**: IA local para análisis y adaptación de borradores
 - **bot**: Bot de Telegram
-- **n8n**: Orquestador de workflows (scraping periódico, revisar plazos, sync CalDAV)
+- **api**: API interna (FastAPI) para que n8n invoque scraping, revisar plazos y sync CalDAV
+- **n8n**: Orquestador de workflows (llama a la API por HTTP)
 
 ```bash
 docker compose up -d
 ```
 
-El **worker** de scraping ya no corre como contenedor 24/7: n8n lo ejecuta según los workflows configurados. Importa los JSON de `workflows/` en n8n (http://localhost:5678) y actívalos. Ver [workflows/README.md](workflows/README.md).
+El **worker** de scraping ya no corre como contenedor 24/7: n8n llama a la API según los workflows configurados. Importa los JSON de `workflows/` en n8n (http://localhost:5678) y actívalos. Ver [workflows/README.md](workflows/README.md).
 
 ### Primera vez: descargar modelo en Ollama
 
@@ -136,13 +137,13 @@ CALDAV_PASS=tu_password
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  docker-compose                                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐   │
-│  │ bot         │  │ n8n         │  │ ollama                  │   │
-│  │ Telegram    │  │ workflows   │  │ phi3:mini / mistral     │   │
-│  └─────────────┘  └──────┬──────┘  └───────────┬─────────────┘   │
-│                         │                      │                 │
-│                         └──────────┬───────────┘                 │
-│                                    ▼                             │
-│                         convocatorias.csv (volumen)               │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
+│  │ bot         │  │ api         │  │ n8n         │  │ ollama  │ │
+│  │ Telegram    │  │ FastAPI     │  │ workflows   │  │ IA      │ │
+│  └─────────────┘  └──────┬──────┘  └──────┬──────┘  └────┬────┘ │
+│                          │               │ HTTP         │      │
+│                          │               └──────────────┘      │
+│                          ▼─────────────────────────────────────┤
+│                   convocatorias.csv (volumen)                    │
 └─────────────────────────────────────────────────────────────────┘
 ```

@@ -20,13 +20,13 @@
     },
     {
       "parameters": {
-        "command": "cd /app && python3 -m scripts.sync_caldav",
-        "executeOnce": true
+        "method": "POST",
+        "url": "http://api:8000/sync-caldav"
       },
-      "id": "execute-sync",
-      "name": "Sync CalDAV",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "id": "http-sync",
+      "name": "Llamar API sync-caldav",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [460, 300]
     }
   ],
@@ -35,7 +35,7 @@
       "main": [
         [
           {
-            "node": "Sync CalDAV",
+            "node": "Llamar API sync-caldav",
             "type": "main",
             "index": 0
           }

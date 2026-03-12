@@ -1,6 +1,6 @@
 # Workflows n8n para ConvocAUTOrias
 
-Estos workflows orquestan las tareas periódicas del sistema. Importa los JSON en n8n (http://localhost:5678) y actívalos.
+Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API interna (`api:8000`) que ejecuta los scripts Python.
 
 ## Importar workflows
 
@@ -20,9 +20,8 @@ Estos workflows orquestan las tareas periódicas del sistema. Importa los JSON e
 
 ## Requisitos
 
-- El nodo **Execute Command** debe estar habilitado (variable `NODES_EXCLUDE=[]` en docker-compose).
-- La imagen n8n custom incluye Python y las dependencias del proyecto.
-- Los comandos se ejecutan con `python3` desde `/app` (directorio del proyecto montado).
+- El servicio **api** debe estar corriendo (expone HTTP en el puerto 8000).
+- n8n usa la imagen oficial; las URLs `http://api:8000/...` resuelven en la red Docker interna.
 
 ## Notas
 

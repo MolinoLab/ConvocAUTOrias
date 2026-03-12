@@ -20,13 +20,13 @@
     },
     {
       "parameters": {
-        "command": "cd /app && python3 -m scripts.revisar_convocatorias",
-        "executeOnce": true
+        "method": "POST",
+        "url": "http://api:8000/revisar"
       },
-      "id": "execute-revisar",
-      "name": "Revisar convocatorias",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "id": "http-revisar",
+      "name": "Llamar API revisar",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [460, 300]
     }
   ],
@@ -35,7 +35,7 @@
       "main": [
         [
           {
-            "node": "Revisar convocatorias",
+            "node": "Llamar API revisar",
             "type": "main",
             "index": 0
           }

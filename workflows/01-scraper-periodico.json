@@ -20,13 +20,13 @@
     },
     {
       "parameters": {
-        "command": "cd /app && python3 -m scripts.worker_scraper --once",
-        "executeOnce": true
+        "method": "POST",
+        "url": "http://api:8000/scrape"
       },
-      "id": "execute-scraper",
-      "name": "Ejecutar worker scraper",
-      "type": "n8n-nodes-base.executeCommand",
-      "typeVersion": 1,
+      "id": "http-scraper",
+      "name": "Llamar API scrape",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
       "position": [460, 300]
     }
   ],
@@ -35,7 +35,7 @@
       "main": [
         [
           {
-            "node": "Ejecutar worker scraper",
+            "node": "Llamar API scrape",
             "type": "main",
             "index": 0
           }
