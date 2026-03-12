@@ -32,9 +32,9 @@ services:
     volumes:
       - .:/app
       - ./convocatorias.csv:/app/convocatorias.csv
-    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8888"]
     ports:
-      - "8000:8000"
+      - "8888:8888"
     depends_on:
       - ollama
     restart: unless-stopped

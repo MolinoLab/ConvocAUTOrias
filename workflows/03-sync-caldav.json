@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://api:8000/sync-caldav"
+        "url": "http://api:8888/sync-caldav"
       },
       "id": "http-sync",
       "name": "Llamar API sync-caldav",

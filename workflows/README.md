@@ -1,6 +1,6 @@
 # Workflows n8n para ConvocAUTOrias
 
-Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API interna (`api:8000`) que ejecuta los scripts Python.
+Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API interna (`api:8888`) que ejecuta los scripts Python.
 
 ## Importar workflows
 
@@ -20,8 +20,8 @@ Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API
 
 ## Requisitos
 
-- El servicio **api** debe estar corriendo (expone HTTP en el puerto 8000).
-- n8n usa la imagen oficial; las URLs `http://api:8000/...` resuelven en la red Docker interna.
+- El servicio **api** debe estar corriendo (expone HTTP en el puerto 8888).
+- n8n usa la imagen oficial; las URLs `http://api:8888/...` resuelven en la red Docker interna.
 
 ## Notas
 

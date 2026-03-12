@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://api:8000/scrape"
+        "url": "http://api:8888/scrape"
       },
       "id": "http-scraper",
       "name": "Llamar API scrape",
