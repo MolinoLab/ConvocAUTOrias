@@ -1,0 +1,52 @@
+{
+  "name": "ConvocAUTOrias - Sync Nextcloud datos",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 22 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Diario 22:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8888/sync-nextcloud-datos"
+      },
+      "id": "http-sync-nextcloud-datos",
+      "name": "Llamar API sync datos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [470, 300]
+    }
+  ],
+  "connections": {
+    "Diario 22:30": {
+      "main": [
+        [
+          {
+            "node": "Llamar API sync datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

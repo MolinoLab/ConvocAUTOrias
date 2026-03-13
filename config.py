@@ -29,6 +29,32 @@ NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
 NEXTCLOUD_USER = os.getenv("NEXTCLOUD_USER", "")
 NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
 NEXTCLOUD_CARPETA = os.getenv("NEXTCLOUD_CARPETA", "Convocatorias")
+NEXTCLOUD_IDEAS_PATH = os.getenv(
+    "NEXTCLOUD_IDEAS_PATH",
+    "Documents/b1tacora/b1tdreamer/Ideas",
+).strip().strip("/")
+
+
+def _parse_allowlist(raw: str) -> tuple[set[str], set[int]]:
+    usernames: set[str] = set()
+    user_ids: set[int] = set()
+    for token in (raw or "").split(","):
+        item = token.strip()
+        if not item:
+            continue
+        if item.startswith("@"):
+            item = item[1:]
+        if item.isdigit():
+            user_ids.add(int(item))
+        else:
+            usernames.add(item.lower())
+    return usernames, user_ids
+
+
+TELEGRAM_ALLOWLIST_RAW = os.getenv("TELEGRAM_ALLOWLIST", "@b1tdreamer")
+TELEGRAM_ALLOWLIST_USERNAMES, TELEGRAM_ALLOWLIST_IDS = _parse_allowlist(
+    TELEGRAM_ALLOWLIST_RAW
+)
 
 # Rutas de datos (persistencia)
 _data_dir_env = os.getenv("DATA_DIR", "data").strip()

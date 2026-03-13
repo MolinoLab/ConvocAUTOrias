@@ -3,6 +3,7 @@ Cliente WebDAV para subir borradores a Nextcloud.
 """
 import sys
 from pathlib import Path
+from typing import Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -21,6 +22,37 @@ def _url_webdav(ruta: str) -> str:
     return base + path
 
 
+def _url_webdav_ideas(ruta_relativa: str) -> str:
+    base = config.NEXTCLOUD_URL.rstrip("/")
+    path = (
+        f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/"
+        f"{config.NEXTCLOUD_IDEAS_PATH}/{ruta_relativa.strip('/')}"
+    )
+    return base + path
+
+
+def _url_webdav_ideas_carpeta() -> str:
+    base = config.NEXTCLOUD_URL.rstrip("/")
+    path = f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/{config.NEXTCLOUD_IDEAS_PATH}"
+    return base + path
+
+
+def _auth():
+    return HTTPBasicAuth(config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD)
+
+
+def _mkcol(url: str) -> bool:
+    try:
+        r = requests.request("MKCOL", url, auth=_auth(), timeout=10)
+        return r.status_code in (200, 201, 204, 405)
+    except Exception:
+        return False
+
+
+def _split_path_parts(path: str) -> Iterable[str]:
+    return [p for p in path.strip("/").split("/") if p]
+
+
 def subir_borrador(nombre_archivo: str, contenido: str) -> bool:
     """
     Sube un borrador (texto) a la carpeta Convocatorias en Nextcloud.
@@ -32,8 +64,7 @@ def subir_borrador(nombre_archivo: str, contenido: str) -> bool:
         return False
     try:
         url = _url_webdav(nombre_archivo)
-        auth = HTTPBasicAuth(config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD)
-        r = requests.put(url, data=contenido.encode("utf-8"), auth=auth, timeout=30)
+        r = requests.put(url, data=contenido.encode("utf-8"), auth=_auth(), timeout=30)
         return r.status_code in (200, 201, 204)
     except Exception:
         return False
@@ -49,8 +80,45 @@ def asegurar_carpeta() -> bool:
         base = config.NEXTCLOUD_URL.rstrip("/")
         path = f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/{config.NEXTCLOUD_CARPETA}"
         url = base + path
-        auth = HTTPBasicAuth(config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD)
-        r = requests.request("MKCOL", url, auth=auth, timeout=10)
-        return r.status_code in (200, 201, 204, 405)  # 405 = ya existe
+        return _mkcol(url)
     except Exception:
         return False
+
+
+def asegurar_carpeta_ideas() -> bool:
+    """Crea la ruta de ideas en Nextcloud si no existe."""
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        return False
+    if not requests:
+        return False
+    try:
+        base_url = f"{config.NEXTCLOUD_URL.rstrip('/')}/remote.php/dav/files/{config.NEXTCLOUD_USER}"
+        current = base_url
+        for part in _split_path_parts(config.NEXTCLOUD_IDEAS_PATH):
+            current = f"{current}/{part}"
+            if not _mkcol(current):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def subir_archivo_ideas(nombre_archivo: str, contenido: bytes) -> bool:
+    """Sube un archivo binario a la ruta de ideas en Nextcloud."""
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        return False
+    if not requests:
+        return False
+    try:
+        if not asegurar_carpeta_ideas():
+            return False
+        url = _url_webdav_ideas(nombre_archivo)
+        r = requests.put(url, data=contenido, auth=_auth(), timeout=30)
+        return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
+
+
+def subir_idea(nombre_archivo: str, contenido: str) -> bool:
+    """Sube una idea markdown/texto a la carpeta de ideas."""
+    return subir_archivo_ideas(nombre_archivo, contenido.encode("utf-8"))

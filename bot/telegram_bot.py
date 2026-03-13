@@ -33,6 +33,31 @@ URL_PATTERN = re.compile(
 _WHISPER_MODEL = None
 
 
+def _esta_autorizado(update: Update) -> bool:
+    """Valida si el usuario está en la allowlist configurada."""
+    # Si no hay allowlist, se considera abierto (modo debug).
+    if not config.TELEGRAM_ALLOWLIST_USERNAMES and not config.TELEGRAM_ALLOWLIST_IDS:
+        return True
+
+    usuario = update.effective_user
+    if not usuario:
+        return False
+
+    username = (usuario.username or "").strip().lower()
+    user_id = int(usuario.id)
+    if username and username in config.TELEGRAM_ALLOWLIST_USERNAMES:
+        return True
+    if user_id in config.TELEGRAM_ALLOWLIST_IDS:
+        return True
+    return False
+
+
+async def _rechazar_no_autorizado(update: Update) -> None:
+    msg = getattr(update, "message", None)
+    if msg:
+        await msg.reply_text("Este bot está restringido a un usuario autorizado.")
+
+
 def _es_url(texto: str) -> bool:
     return bool(URL_PATTERN.match(texto.strip()))
 
@@ -166,6 +191,9 @@ def _transcribir_audio(ruta_audio: Path) -> str:
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     await update.message.reply_text(
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
@@ -179,6 +207,9 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_añadir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     if not context.args:
         await update.message.reply_text("Uso: /sube <url>")
         return
@@ -190,6 +221,9 @@ async def cmd_añadir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     convocatorias = listar()
     pendientes = [c for c in convocatorias if c.estado == "pendiente"]
     if not pendientes:
@@ -205,6 +239,9 @@ async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     if not context.args:
         await update.message.reply_text(
             "Uso: /idea <descripcion>\n"
@@ -227,6 +264,9 @@ async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     if not context.args:
         await update.message.reply_text("Uso: /revisar <id>")
         return
@@ -285,6 +325,9 @@ async def _procesar_url(update: Update, url: str) -> None:
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Si el mensaje contiene una URL, la procesa como nueva convocatoria."""
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     texto = update.message.text or ""
     url = _extraer_url(texto)
     if url:
@@ -295,6 +338,9 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Procesa audios/voice como idea por defecto."""
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     mensaje = update.message
     if not mensaje:
         return

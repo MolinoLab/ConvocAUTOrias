@@ -57,7 +57,7 @@ docker compose up -d
 
 El **worker** de scraping ya no corre como contenedor 24/7: n8n llama a la API según los workflows configurados. Importa los JSON de `workflows/` en n8n (http://localhost:5678) y actívalos. Ver [workflows/README.md](workflows/README.md).
 
-Los datos de convocatorias e ideas se guardan en `data/` y, en Docker, se persisten con el volumen nombrado `convocauto_data`.
+Los datos de convocatorias e ideas se guardan en `data/` dentro del proyecto (sin volumen Docker dedicado para bot/api), para facilitar backup y versionado con git.
 
 ### Primera vez: descargar modelo en Ollama
 
@@ -118,6 +118,7 @@ N8N_PASSWORD=contraseña_segura_para_admin
 # Telegram
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_CHAT_ID=tu_chat_id
+TELEGRAM_ALLOWLIST=@b1tdreamer
 
 # Ollama (en Docker usa http://ollama:11434)
 OLLAMA_URL=http://localhost:11434
@@ -134,6 +135,7 @@ NEXTCLOUD_URL=https://tu-nextcloud.com
 NEXTCLOUD_USER=tu_usuario
 NEXTCLOUD_PASSWORD=tu_password
 NEXTCLOUD_CARPETA=Convocatorias
+NEXTCLOUD_IDEAS_PATH=Documents/b1tacora/b1tdreamer/Ideas
 
 # CalDAV (opcional)
 CALDAV_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/mi-calendario/
@@ -171,7 +173,12 @@ El bot permite dos flujos:
    - Persistencia hibrida:
      - Metadatos en `data/ideas.csv` (`id`, `resumen`, `tags`, `categorias`, `presupuesto_aproximado`, `ruta`, `fuente`).
      - Desarrollo completo en `data/ideas/{id}.md`.
+   - Restriccion de acceso: el bot solo responde a usuarios permitidos en `TELEGRAM_ALLOWLIST`.
 
 Flujo diario de ideas manuales:
 - El workflow `04-indexar-ideas.json` llama al endpoint `POST /indexar-ideas`.
 - Ese script revisa `data/ideas/*.md` y `data/ideas/*.txt` no indexados y los añade a `data/ideas.csv`.
+
+Sincronizacion con Nextcloud:
+- El workflow `05-sync-nextcloud-datos.json` llama al endpoint `POST /sync-nextcloud-datos`.
+- Sube `data/convocatorias.csv`, `data/ideas.csv` y los ficheros de `data/ideas/` a `Documents/b1tacora/b1tdreamer/Ideas`.

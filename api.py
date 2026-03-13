@@ -1,6 +1,6 @@
 """
 API mínima para que n8n invoque las tareas del proyecto vía HTTP.
-Endpoints: POST /scrape, POST /revisar, POST /sync-caldav, POST /indexar-ideas
+Endpoints: POST /scrape, POST /revisar, POST /sync-caldav, POST /indexar-ideas, POST /sync-nextcloud-datos
 """
 import subprocess
 import sys
@@ -54,6 +54,12 @@ def sync_caldav():
 def indexar_ideas():
     """Indexa ideas nuevas desde data/ideas hacia data/ideas.csv."""
     return _run_script("scripts.indexar_ideas")
+
+
+@app.post("/sync-nextcloud-datos")
+def sync_nextcloud_datos():
+    """Sube copias de ideas/convocatorias a Nextcloud."""
+    return _run_script("scripts.sync_nextcloud_datos")
 
 
 @app.get("/health")
