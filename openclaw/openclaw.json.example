@@ -1,0 +1,30 @@
+{
+  "gateway": {
+    "port": 18789,
+    "auth": {
+      "token": "CAMBIA-ESTE-TOKEN-SECRETO"
+    }
+  },
+  "models": {
+    "providers": {
+      "ollama": {
+        "baseUrl": "http://ollama:11434",
+        "apiKey": "ollama-local",
+        "api": "ollama"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "ollama/phi3:mini"
+      }
+    }
+  },
+  "skills": {
+    "load": {
+      "extraDirs": [],
+      "watch": true
+    }
+  }
+}

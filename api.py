@@ -1,12 +1,13 @@
 """
-API mínima para que n8n invoque las tareas del proyecto vía HTTP.
-Endpoints: POST /scrape, POST /revisar, POST /sync-caldav, POST /indexar-ideas, POST /sync-nextcloud-datos
+API mínima para que n8n y OpenClaw invoquen las tareas del proyecto vía HTTP.
+Endpoints: POST /scrape, POST /revisar, POST /sync-caldav, POST /indexar-ideas,
+           POST /sync-nextcloud-datos, POST /generar-borrador
 """
 import subprocess
 import sys
 from pathlib import Path
-
 from fastapi import FastAPI
+from pydantic import BaseModel
 
 # Asegurar que el proyecto está en el path
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -60,6 +61,16 @@ def indexar_ideas():
 def sync_nextcloud_datos():
     """Sube copias de ideas/convocatorias a Nextcloud."""
     return _run_script("scripts.sync_nextcloud_datos")
+
+
+class GenerarBorradorRequest(BaseModel):
+    id: str
+
+
+@app.post("/generar-borrador")
+def generar_borrador(req: GenerarBorradorRequest):
+    """Genera un borrador adaptado para una convocatoria y lo sube a Nextcloud."""
+    return _run_script("scripts.generar_borrador", req.id)
 
 
 @app.get("/health")

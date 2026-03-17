@@ -44,12 +44,13 @@ pip install -r requirements.txt
 
 ## Docker
 
-El stack incluye cuatro servicios:
+El stack incluye cinco servicios:
 
 - **ollama**: IA local para análisis y adaptación de borradores
 - **bot**: Bot de Telegram
-- **api**: API interna (FastAPI) para que n8n invoque scraping, revisar plazos y sync CalDAV
+- **api**: API interna (FastAPI) para que n8n y OpenClaw invoquen scraping, revisar plazos, sync CalDAV y generar borradores
 - **n8n**: Orquestador de workflows (llama a la API por HTTP)
+- **openclaw**: Asistente IA conversacional que usa Ollama y llama a la API mediante skills
 
 ```bash
 docker compose up -d
@@ -146,17 +147,20 @@ CALDAV_PASS=tu_password
 ## Arquitectura Docker
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  docker-compose                                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────┐ │
-│  │ bot         │  │ api         │  │ n8n         │  │ ollama  │ │
-│  │ Telegram    │  │ FastAPI     │  │ workflows   │  │ IA      │ │
-│  └─────────────┘  └──────┬──────┘  └──────┬──────┘  └────┬────┘ │
-│                          │               │ HTTP         │      │
-│                          │               └──────────────┘      │
-│                          ▼─────────────────────────────────────┤
-│                   /app/data (convocatorias + ideas)              │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│  docker-compose                                                           │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐ │
+│  │ bot      │  │ api      │  │ n8n      │  │ ollama   │  │ openclaw   │ │
+│  │ Telegram │  │ FastAPI  │  │ workflows│  │ IA local │  │ Asistente  │ │
+│  └──────────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──┬───┬────┘ │
+│                     │             │ HTTP        │           │   │      │
+│                     │             └─────────────┘           │   │      │
+│                     │◄──────────────────────────────────────┘   │      │
+│                     │         http_request (skills)              │      │
+│                     │◄──────────────────────────────────────────┘      │
+│                     ▼                          Ollama (modelo local)   │
+│              /app/data (convocatorias + ideas)                         │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Bot de Telegram
@@ -182,3 +186,40 @@ Flujo diario de ideas manuales:
 Sincronizacion con Nextcloud:
 - El workflow `05-sync-nextcloud-datos.json` llama al endpoint `POST /sync-nextcloud-datos`.
 - Sube `data/convocatorias.csv`, `data/ideas.csv` y los ficheros de `data/ideas/` a `Documents/b1tacora/b1tdreamer/Ideas`.
+
+## OpenClaw (asistente conversacional)
+
+OpenClaw es un asistente IA de código abierto que funciona como interfaz conversacional para ConvocAUTOrias. Usa exclusivamente Ollama (sin APIs de pago) y llama a la API interna mediante skills.
+
+### Primera vez: configurar OpenClaw
+
+1. Copiar la plantilla de configuración:
+
+   ```bash
+   cp openclaw/openclaw.json.example openclaw/openclaw.json
+   ```
+
+2. (Opcional) Editar `openclaw/openclaw.json` para:
+   - Cambiar el modelo por defecto (por ejemplo `ollama/mistral:7b` en lugar de `ollama/phi3:mini`).
+   - Configurar `gateway.auth.token` con un token secreto propio.
+   - Habilitar canales de mensajería (Telegram, Discord, etc.) en la sección `channels`.
+
+3. Levantar el stack completo:
+
+   ```bash
+   docker compose up -d
+   ```
+
+4. El gateway de OpenClaw estará disponible en `http://localhost:18789`.
+
+### Skills
+
+Las skills de ConvocAUTOrias están en `openclaw/workspace/skills/convocautorias/SKILL.md`. Enseñan al agente a usar los endpoints de la API (`/scrape`, `/revisar`, `/sync-caldav`, `/indexar-ideas`, `/sync-nextcloud-datos`, `/generar-borrador`).
+
+Si editas una skill, OpenClaw la recarga automáticamente en el siguiente turno (con `watch: true` en la configuración).
+
+Para añadir nuevas skills, crea una carpeta en `openclaw/workspace/skills/<nombre>/` con su `SKILL.md`.
+
+### Compatibilidad con el bot existente
+
+El bot de Telegram (`bot`) sigue funcionando en paralelo. OpenClaw es un canal adicional; no sustituye al bot sino que amplía las posibilidades de interacción con lenguaje natural.

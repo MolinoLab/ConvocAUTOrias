@@ -52,6 +52,25 @@ services:
       - api
     restart: unless-stopped
 
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: convocauto-openclaw
+    command: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+    ports:
+      - "18789:18789"
+    environment:
+      - OLLAMA_API_KEY=ollama-local
+    volumes:
+      - ./openclaw:/home/node/.openclaw
+    depends_on:
+      - ollama
+      - api
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    restart: unless-stopped
+
 volumes:
   ollama_data:
   n8n_data:
