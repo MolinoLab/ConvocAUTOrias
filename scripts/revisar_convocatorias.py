@@ -2,7 +2,6 @@
 Revisa plazos de convocatorias y envía recordatorios por Telegram.
 Lista las pendientes y opcionalmente notifica las que tienen plazo próximo.
 """
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,40 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import listar
 from src.notifier import enviar_mensaje
-
-
-def _parsear_plazo(plazo_texto: str) -> datetime | None:
-    """
-    Intenta parsear plazo_fin a fecha.
-    Soporta: "16-nov", "4 mayo", "1-nov", formatos DD/MM/YYYY, etc.
-    """
-    if not plazo_texto or not plazo_texto.strip():
-        return None
-    s = plazo_texto.strip().lower()
-    año_actual = datetime.now().year
-
-    # DD-MM o D-MM (ej. 16-nov, 1-nov)
-    m = re.match(r"(\d{1,2})[-]?(ene|feb|mar|abr|may|jun|jul|ago|sep|oct|nov|dic)", s)
-    if m:
-        dia = int(m.group(1))
-        meses = "ene feb mar abr may jun jul ago sep oct nov dic".split()
-        try:
-            mes = meses.index(m.group(2)) + 1
-            return datetime(año_actual, mes, min(dia, 28))
-        except (ValueError, IndexError):
-            pass
-
-    # DD/MM/YYYY o DD-MM-YYYY
-    m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", s)
-    if m:
-        d, m_val, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        y = y if y > 100 else 2000 + y
-        try:
-            return datetime(y, m_val, min(d, 28))
-        except ValueError:
-            pass
-
-    return None
+from src.plazo import parsear_plazo
 
 
 def main():
@@ -61,7 +27,7 @@ def main():
     sin_plazo = []
 
     for c in pendientes:
-        fecha = _parsear_plazo(c.plazo_fin)
+        fecha = parsear_plazo(c.plazo_fin)
         if fecha:
             dias = (fecha - hoy).days
             if 0 <= dias <= 30:

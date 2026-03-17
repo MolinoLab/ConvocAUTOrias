@@ -1,6 +1,6 @@
 """
 Bot Telegram que recibe URLs y comandos.
-Comandos: /sube <url>, /idea <texto>, /listar, /revisar <id>, /ayuda.
+Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -22,6 +22,7 @@ from telegram.error import Conflict
 import config
 from src.db import Convocatoria, añadir, buscar_por_id, listar, actualizar
 from src.db_ideas import Idea, añadir_idea
+from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
 # Regex para detectar URLs
@@ -198,7 +199,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
-        "/listar - Lista las convocatorias pendientes\n"
+        "/listar o /list - Lista convocatorias futuras por proximidad\n"
+        "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
         "/ayuda - Muestra esta ayuda\n\n"
         "Tambien puedes enviar una URL directamente para subirla.\n"
@@ -220,22 +222,126 @@ async def cmd_añadir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _procesar_url(update, url)
 
 
+def _obtener_futuras_ordenadas() -> list[Convocatoria]:
+    """Filtra convocatorias pendientes futuras y las ordena por proximidad."""
+    pendientes = [c for c in listar() if c.estado == "pendiente"]
+    futuras = [c for c in pendientes if es_futura(c.plazo_fin)]
+    futuras.sort(key=lambda c: clave_orden(c.plazo_fin))
+    return futuras
+
+
+def _formato_plazo(plazo_fin: str) -> str:
+    fecha = parsear_plazo(plazo_fin)
+    if fecha:
+        return fecha.strftime("%d/%m/%Y")
+    return plazo_fin.strip() if plazo_fin.strip() else "Sin fecha"
+
+
 async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
-    convocatorias = listar()
-    pendientes = [c for c in convocatorias if c.estado == "pendiente"]
-    if not pendientes:
-        await update.message.reply_text("No hay convocatorias pendientes.")
+
+    futuras = _obtener_futuras_ordenadas()
+
+    if not futuras:
+        total_pendientes = sum(1 for c in listar() if c.estado == "pendiente")
+        if total_pendientes:
+            await update.message.reply_text(
+                f"No hay convocatorias futuras.\n"
+                f"Hay {total_pendientes} convocatorias con plazo pasado."
+            )
+        else:
+            await update.message.reply_text("No hay convocatorias pendientes.")
         return
-    lineas = []
-    for c in pendientes[:15]:
-        titulo = (c.titulo[:50] + "...") if len(c.titulo) > 50 else c.titulo
-        lineas.append(f"• {c.id}: {titulo}\n  {c.url}")
-    if len(pendientes) > 15:
-        lineas.append(f"\n... y {len(pendientes) - 15} más")
-    await update.message.reply_text("\n\n".join(lineas))
+
+    cabecera = f"Hay {len(futuras)} convocatoria(s) futura(s):\n\n"
+    lineas: list[str] = []
+    for i, c in enumerate(futuras, 1):
+        titulo = (c.titulo[:55] + "...") if len(c.titulo) > 55 else c.titulo
+        plazo = _formato_plazo(c.plazo_fin)
+        lineas.append(f"{i}. [{plazo}] {titulo}\n   /ver {c.id}")
+
+    texto_completo = cabecera + "\n\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        partes: list[str] = [cabecera]
+        bloque_actual = ""
+        for linea in lineas:
+            if len(partes[-1]) + len(bloque_actual) + len(linea) + 2 > MAX_MSG:
+                partes[-1] += bloque_actual
+                partes.append("")
+                bloque_actual = ""
+            bloque_actual += linea + "\n\n"
+        partes[-1] += bloque_actual
+        for parte in partes:
+            if parte.strip():
+                await update.message.reply_text(parte.strip())
+
+
+def _formatear_convocatoria(conv: Convocatoria) -> str:
+    """Formatea todos los campos de una convocatoria para mostrar al usuario."""
+    plazo = conv.plazo_fin.strip() if conv.plazo_fin.strip() else "No disponible"
+    requisitos = conv.requisitos.strip() if conv.requisitos.strip() else "No especificados"
+
+    descripcion = conv.descripcion.strip()
+    if len(descripcion) > 1500:
+        descripcion = descripcion[:1500] + "... (recortado)"
+    if not descripcion:
+        descripcion = "No disponible"
+
+    return (
+        f"Titulo: {conv.titulo}\n\n"
+        f"URL: {conv.url}\n\n"
+        f"Plazo: {plazo}\n\n"
+        f"Requisitos: {requisitos}\n\n"
+        f"Descripcion:\n{descripcion}\n\n"
+        f"(Estado: {conv.estado} | Fuente: {conv.fuente} | Ingesta: {conv.fecha_ingesta})"
+    )
+
+
+async def cmd_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /ver <id o numero>\nEjemplo: /ver 3  o  /ver c4ececba4acfc373")
+        return
+
+    argumento = context.args[0].strip()
+    conv: Convocatoria | None = None
+
+    if argumento.isdigit():
+        indice = int(argumento)
+        futuras = _obtener_futuras_ordenadas()
+        if 1 <= indice <= len(futuras):
+            conv = futuras[indice - 1]
+        else:
+            await update.message.reply_text(
+                f"Numero fuera de rango. Hay {len(futuras)} convocatoria(s) futura(s).\n"
+                f"Usa /listar para verlas."
+            )
+            return
+    else:
+        conv = buscar_por_id(argumento)
+
+    if not conv:
+        await update.message.reply_text(
+            f"No se encontro convocatoria con id '{argumento}'.\n"
+            f"Usa /listar para ver las disponibles."
+        )
+        return
+
+    texto = _formatear_convocatoria(conv)
+    MAX_MSG = 4000
+    if len(texto) <= MAX_MSG:
+        await update.message.reply_text(texto)
+    else:
+        await update.message.reply_text(texto[:MAX_MSG])
+        await update.message.reply_text(texto[MAX_MSG:])
 
 
 async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -414,6 +520,8 @@ def main() -> None:
     app.add_handler(CommandHandler("sube", cmd_añadir))
     app.add_handler(CommandHandler("idea", cmd_idea))
     app.add_handler(CommandHandler("listar", cmd_listar))
+    app.add_handler(CommandHandler("list", cmd_listar))
+    app.add_handler(CommandHandler("ver", cmd_ver))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
