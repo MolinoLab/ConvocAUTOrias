@@ -24,7 +24,7 @@ pip install -r requirements.txt
    ```bash
    python -m bot.telegram_bot
    ```
-   Comandos: `/sube <url>`, `/idea <texto>`, `/listar`, `/revisar <id>`, `/ayuda`.
+   Comandos: `/sube <url>`, `/idea <texto>`, `/func <texto> <prioridad> [estado]`, `/listfunc`, `/listar`, `/revisar <id>`, `/ayuda`.
    También puedes enviar una URL directamente. Si envías un audio, el bot lo transcribe y lo guarda como idea.
 
 3. **Revisar plazos y notificaciones**:
@@ -159,13 +159,13 @@ CALDAV_PASS=tu_password
 │                     │         http_request (skills)              │      │
 │                     │◄──────────────────────────────────────────┘      │
 │                     ▼                          Ollama (modelo local)   │
-│              /app/data (convocatorias + ideas)                         │
+│              /app/data (convocatorias + ideas + funcionalidad)          │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Bot de Telegram
 
-El bot permite dos flujos:
+El bot permite tres flujos:
 
 1. **Convocatorias**:
    - `/sube <url>` o enviar una URL directamente.
@@ -178,6 +178,16 @@ El bot permite dos flujos:
      - Metadatos en `data/ideas.csv` (`id`, `resumen`, `tags`, `categorias`, `presupuesto_aproximado`, `ruta`, `fuente`).
      - Desarrollo completo en `data/ideas/{id}.md`.
    - Restriccion de acceso: el bot solo responde a usuarios permitidos en `TELEGRAM_ALLOWLIST`.
+
+3. **Funcionalidades** (tareas de desarrollo pendientes):
+   - `/func <texto> <prioridad 1-5> [estado]` para registrar una funcionalidad.
+   - `/listfunc` para listar todas las funcionalidades ordenadas por prioridad (mayor primero).
+   - Prioridad: numérica de 1 (baja) a 5 (urgente).
+   - Estados válidos: `pendiente`, `en_progreso`, `hecha` (por defecto: `pendiente`).
+   - Persistencia en `data/funcionalidad.csv` (o `data/funcionalidad.db` si existe SQLite).
+   - Esquema: `id`, `texto`, `prioridad`, `estado`, `fecha_ingesta`, `fuente`.
+   - Ejemplo: `/func mejorar parser del scraper 4 pendiente`
+   - API: `GET /funcionalidad` (listar), `POST /funcionalidad` (crear).
 
 Flujo diario de ideas manuales:
 - El workflow `04-indexar-ideas.json` llama al endpoint `POST /indexar-ideas`.

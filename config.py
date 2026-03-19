@@ -65,7 +65,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 CSV_CONVOCATORIAS = DATA_DIR / "convocatorias.csv"
 CSV_IDEAS = DATA_DIR / "ideas.csv"
+CSV_FUNCIONALIDAD = DATA_DIR / "funcionalidad.csv"
 DB_SQLITE = DATA_DIR / "convocatorias.db"
+DB_FUNCIONALIDAD = DATA_DIR / "funcionalidad.db"
 CARPETA_IDEAS = DATA_DIR / "ideas"
 CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
 

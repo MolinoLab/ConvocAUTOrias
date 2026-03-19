@@ -1,6 +1,8 @@
 """
 Bot Telegram que recibe URLs y comandos.
-Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>, /ayuda.
+Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
+          /func <texto> <prioridad> [estado], /listfunc,
+          /tarea "titulo" [fecha] ["desc"], /listtareas, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -22,6 +24,15 @@ from telegram.error import Conflict
 import config
 from src.db import Convocatoria, añadir, buscar_por_id, listar, actualizar
 from src.db_ideas import Idea, añadir_idea
+from src.db_funcionalidad import (
+    Funcionalidad,
+    ESTADOS_VALIDOS,
+    añadir as añadir_func,
+    listar as listar_func,
+    buscar_por_id as buscar_func_por_id,
+    actualizar as actualizar_func,
+)
+from src.caldav_client import crear_tarea, listar_tareas
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -191,6 +202,26 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
+_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea"}
+
+
+def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
+    """Extrae la acción (primera palabra) y el contenido restante de una transcripción.
+
+    Retorna (accion, contenido). Si la primera palabra no es una acción
+    reconocida, retorna (None, texto_original_completo).
+    """
+    normalizado = " ".join(texto.split())
+    if not normalizado:
+        return None, ""
+    partes = normalizado.split(None, 1)
+    candidato = re.sub(r"[,.:;!?]+$", "", partes[0]).lower()
+    if candidato in _ACCIONES_AUDIO:
+        contenido = partes[1].strip() if len(partes) > 1 else ""
+        return candidato, contenido
+    return None, normalizado
+
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -199,12 +230,20 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
+        "/func <texto> <prioridad 1-5> [estado] - Registra una funcionalidad pendiente\n"
+        "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
+        '/tarea "Titulo" [YYYY-MM-DD] ["Descripcion"] - Crea tarea en Nextcloud\n'
+        "/listtareas - Lista tareas de Nextcloud por prioridad\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
         "/ayuda - Muestra esta ayuda\n\n"
-        "Tambien puedes enviar una URL directamente para subirla.\n"
-        "Si envias un audio, se tratara como idea automaticamente."
+        "Tambien puedes enviar una URL directamente para subirla.\n\n"
+        "Audio: la primera palabra determina la accion:\n"
+        "  idea <descripcion> - Guarda una idea\n"
+        "  funcionalidad <descripcion> - Registra funcionalidad (P3, pendiente)\n"
+        "  tarea <descripcion> - Crea tarea en Nextcloud\n"
+        "  Si no se reconoce accion, se guarda como idea."
     )
 
 
@@ -369,6 +408,220 @@ async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _generar_id_func(texto: str) -> str:
+    base = f"{datetime.now().isoformat()}::func::{texto[:500]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+_PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
+
+
+async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /func <texto> <prioridad 1-5> [estado]\n"
+            "Ejemplo: /func mejorar parser del scraper 4 pendiente\n\n"
+            "Estados validos: pendiente, en_progreso, hecha\n"
+            "Si no indicas estado, se asume 'pendiente'.\n"
+            "La prioridad (1-5) debe ser el penultimo o ultimo argumento numerico."
+        )
+        return
+
+    args = list(context.args)
+    estado = "pendiente"
+    prioridad: int | None = None
+
+    if args[-1].lower() in ESTADOS_VALIDOS:
+        estado = args.pop().lower()
+
+    if args and args[-1].isdigit():
+        val = int(args.pop())
+        if 1 <= val <= 5:
+            prioridad = val
+        else:
+            await update.message.reply_text("La prioridad debe estar entre 1 y 5.")
+            return
+
+    if prioridad is None:
+        await update.message.reply_text(
+            "Falta la prioridad (1-5).\n"
+            "Uso: /func <texto> <prioridad> [estado]"
+        )
+        return
+
+    texto = " ".join(args).strip()
+    if not texto:
+        await update.message.reply_text("El texto de la funcionalidad no puede estar vacio.")
+        return
+
+    func = Funcionalidad(
+        id=_generar_id_func(texto),
+        texto=texto,
+        prioridad=prioridad,
+        estado=estado,
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente="telegram",
+    )
+    añadir_func(func)
+
+    emoji = _PRIORIDAD_EMOJI.get(prioridad, "")
+    await update.message.reply_text(
+        f"Funcionalidad guardada.\n"
+        f"ID: {func.id}\n"
+        f"Texto: {func.texto}\n"
+        f"Prioridad: {emoji} {func.prioridad}/5\n"
+        f"Estado: {func.estado}"
+    )
+
+
+async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    todas = listar_func()
+    if not todas:
+        await update.message.reply_text("No hay funcionalidades registradas.")
+        return
+
+    todas.sort(key=lambda f: (-f.prioridad, f.estado != "pendiente"))
+
+    lineas: list[str] = []
+    for i, f in enumerate(todas, 1):
+        emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
+        estado_tag = f"[{f.estado}]"
+        txt = (f.texto[:60] + "...") if len(f.texto) > 60 else f.texto
+        lineas.append(f"{i}. {emoji} P{f.prioridad} {estado_tag} {txt}")
+
+    cabecera = f"Funcionalidades ({len(todas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_MSG])
+        await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
+    """Parsea: "Titulo" [YYYY-MM-DD] ["Descripcion"]
+
+    Sin comillas, todo el texto (excepto una posible fecha) se trata como titulo.
+    """
+    texto = texto_raw.strip()
+    if not texto:
+        return "", None, ""
+
+    fecha = None
+    date_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", texto)
+    if date_match:
+        fecha = date_match.group(1)
+        texto = (texto[:date_match.start()] + texto[date_match.end():]).strip()
+
+    partes_quoted = re.findall(r'"([^"]*)"', texto)
+
+    if partes_quoted:
+        titulo = partes_quoted[0]
+        descripcion = partes_quoted[1] if len(partes_quoted) > 1 else ""
+    else:
+        titulo = texto
+        descripcion = ""
+
+    return titulo.strip(), fecha, descripcion.strip()
+
+
+async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/tarea"):
+        texto_raw = texto_raw[len("/tarea"):].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            'Uso: /tarea "Titulo" [YYYY-MM-DD] ["Descripcion"]\n'
+            'Ejemplo: /tarea "Comprar material" 2026-03-25 "Para laboratorio"\n'
+            "La fecha y descripcion son opcionales."
+        )
+        return
+
+    titulo, fecha, descripcion = _parsear_args_tarea(texto_raw)
+
+    if not titulo:
+        await update.message.reply_text("El titulo de la tarea no puede estar vacio.")
+        return
+
+    if fecha:
+        try:
+            datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            await update.message.reply_text(
+                f"Fecha invalida: {fecha}\nUsa formato YYYY-MM-DD (ej. 2026-03-25)"
+            )
+            return
+
+    msg = await update.message.reply_text("Creando tarea en Nextcloud...")
+    ok = crear_tarea(titulo, descripcion=descripcion, fecha_due=fecha)
+
+    if ok:
+        partes = [f"Tarea creada: {titulo}"]
+        if fecha:
+            partes.append(f"Fecha: {fecha}")
+        if descripcion:
+            partes.append(f"Descripcion: {descripcion}")
+        await msg.edit_text("\n".join(partes))
+    else:
+        await msg.edit_text("No se pudo crear la tarea. Verifica la configuracion CalDAV.")
+
+
+_TAREA_PRI_EMOJI = {1: "\U0001f534", 2: "\U0001f534", 3: "\U0001f7e0", 4: "\U0001f7e0",
+                    5: "\U0001f7e1", 6: "\U0001f7e2", 7: "\U0001f535", 8: "\U0001f535", 9: "\u26aa"}
+
+
+async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    msg = await update.message.reply_text("Consultando tareas...")
+
+    try:
+        tareas = listar_tareas()
+    except Exception as exc:
+        await msg.edit_text(f"Error al consultar tareas: {exc}")
+        return
+
+    if not tareas:
+        await msg.edit_text("No hay tareas pendientes.")
+        return
+
+    tareas.sort(key=lambda t: (t["priority"] == 0, t["priority"], t["due"] or "9999-99-99"))
+
+    lineas: list[str] = []
+    for i, t in enumerate(tareas, 1):
+        emoji = _TAREA_PRI_EMOJI.get(t["priority"], "\u2b1c")
+        fecha = f" [{t['due']}]" if t["due"] else ""
+        titulo = (t["summary"][:60] + "...") if len(t["summary"]) > 60 else t["summary"]
+        lineas.append(f"{i}. {emoji}{fecha} {titulo}")
+
+    cabecera = f"Tareas ({len(tareas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await msg.edit_text(texto_completo)
+    else:
+        await msg.edit_text(texto_completo[:MAX_MSG])
+        await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -443,7 +696,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Procesa audios/voice como idea por defecto."""
+    """Transcribe audio y enruta según la primera palabra (idea/funcionalidad/fallback)."""
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
@@ -478,13 +731,70 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await archivo.download_to_drive(custom_path=str(ruta_tmp))
 
         texto = _transcribir_audio(ruta_tmp)
-        idea = _guardar_idea(texto, fuente="telegram_audio")
-        await estado.edit_text(
-            f"Idea guardada desde audio.\n"
-            f"ID: {idea.id}\n"
-            f"Resumen: {idea.resumen}\n"
-            f"Ruta: {idea.ruta}"
-        )
+        accion, contenido = _parsear_accion_audio(texto)
+
+        if accion == "idea":
+            if not contenido:
+                await estado.edit_text("La idea no puede estar vacia. Di: idea <descripcion>")
+                return
+            idea = _guardar_idea(contenido, fuente="telegram_audio")
+            await estado.edit_text(
+                f"Idea guardada desde audio.\n"
+                f"ID: {idea.id}\n"
+                f"Resumen: {idea.resumen}\n"
+                f"Ruta: {idea.ruta}"
+            )
+
+        elif accion == "funcionalidad":
+            if not contenido:
+                await estado.edit_text(
+                    "La funcionalidad no puede estar vacia. Di: funcionalidad <descripcion>"
+                )
+                return
+            func = Funcionalidad(
+                id=_generar_id_func(contenido),
+                texto=contenido,
+                prioridad=3,
+                estado="pendiente",
+                fecha_ingesta=datetime.now().isoformat(),
+                fuente="telegram_audio",
+            )
+            añadir_func(func)
+            emoji = _PRIORIDAD_EMOJI.get(func.prioridad, "")
+            await estado.edit_text(
+                f"Funcionalidad guardada desde audio.\n"
+                f"ID: {func.id}\n"
+                f"Texto: {func.texto}\n"
+                f"Prioridad: {emoji} {func.prioridad}/5\n"
+                f"Estado: {func.estado}"
+            )
+
+        elif accion == "tarea":
+            if not contenido:
+                await estado.edit_text(
+                    "La tarea no puede estar vacia. Di: tarea <descripcion>"
+                )
+                return
+            ok = crear_tarea(contenido)
+            if ok:
+                await estado.edit_text(
+                    f"Tarea creada desde audio.\n"
+                    f"Titulo: {contenido}"
+                )
+            else:
+                await estado.edit_text(
+                    "No se pudo crear la tarea. Verifica la configuracion CalDAV."
+                )
+
+        else:
+            idea = _guardar_idea(contenido, fuente="telegram_audio")
+            await estado.edit_text(
+                f"Idea guardada desde audio (sin accion detectada).\n"
+                f"ID: {idea.id}\n"
+                f"Resumen: {idea.resumen}\n"
+                f"Ruta: {idea.ruta}"
+            )
+
     except Exception as exc:
         await estado.edit_text(f"No se pudo procesar el audio: {exc}")
     finally:
@@ -522,6 +832,10 @@ def main() -> None:
     app.add_handler(CommandHandler("listar", cmd_listar))
     app.add_handler(CommandHandler("list", cmd_listar))
     app.add_handler(CommandHandler("ver", cmd_ver))
+    app.add_handler(CommandHandler("func", cmd_func))
+    app.add_handler(CommandHandler("listfunc", cmd_listfunc))
+    app.add_handler(CommandHandler("tarea", cmd_tarea))
+    app.add_handler(CommandHandler("listtareas", cmd_listtareas))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
