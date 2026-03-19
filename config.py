@@ -19,6 +19,12 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 CALDAV_URL = os.getenv("CALDAV_URL", "")
 CALDAV_USER = os.getenv("CALDAV_USER", "")
 CALDAV_PASS = os.getenv("CALDAV_PASS", "")
+CALDAV_CALENDAR_NAME = os.getenv("CALDAV_CALENDAR_NAME", "MolinoLab").strip()
+# URL completa del calendario (colección), ej. .../remote.php/dav/calendars/usuario/molinolab/
+_caldav_calendar_url_raw = os.getenv("CALDAV_CALENDAR_URL", "").strip()
+CALDAV_CALENDAR_URL = (
+    _caldav_calendar_url_raw.rstrip("/") + "/" if _caldav_calendar_url_raw else ""
+)
 
 # Ollama (IA local)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -29,6 +35,8 @@ NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
 NEXTCLOUD_USER = os.getenv("NEXTCLOUD_USER", "")
 NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
 NEXTCLOUD_CARPETA = os.getenv("NEXTCLOUD_CARPETA", "Convocatorias")
+DECK_BOARD_NAME = os.getenv("DECK_BOARD_NAME", "MolinoLab").strip()
+DECK_STACK_NAME = os.getenv("DECK_STACK_NAME", "").strip()
 NEXTCLOUD_IDEAS_PATH = os.getenv(
     "NEXTCLOUD_IDEAS_PATH",
     "Documents/b1tacora/b1tdreamer/Ideas",
