@@ -1,6 +1,7 @@
 """
 Bot Telegram que recibe URLs y comandos.
-Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>, /ayuda.
+Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
+          /func <texto> <prioridad> [estado], /listfunc, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -22,6 +23,14 @@ from telegram.error import Conflict
 import config
 from src.db import Convocatoria, añadir, buscar_por_id, listar, actualizar
 from src.db_ideas import Idea, añadir_idea
+from src.db_funcionalidad import (
+    Funcionalidad,
+    ESTADOS_VALIDOS,
+    añadir as añadir_func,
+    listar as listar_func,
+    buscar_por_id as buscar_func_por_id,
+    actualizar as actualizar_func,
+)
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -199,6 +208,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
+        "/func <texto> <prioridad 1-5> [estado] - Registra una funcionalidad pendiente\n"
+        "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
@@ -369,6 +380,106 @@ async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _generar_id_func(texto: str) -> str:
+    base = f"{datetime.now().isoformat()}::func::{texto[:500]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+_PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
+
+
+async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /func <texto> <prioridad 1-5> [estado]\n"
+            "Ejemplo: /func mejorar parser del scraper 4 pendiente\n\n"
+            "Estados validos: pendiente, en_progreso, hecha\n"
+            "Si no indicas estado, se asume 'pendiente'.\n"
+            "La prioridad (1-5) debe ser el penultimo o ultimo argumento numerico."
+        )
+        return
+
+    args = list(context.args)
+    estado = "pendiente"
+    prioridad: int | None = None
+
+    if args[-1].lower() in ESTADOS_VALIDOS:
+        estado = args.pop().lower()
+
+    if args and args[-1].isdigit():
+        val = int(args.pop())
+        if 1 <= val <= 5:
+            prioridad = val
+        else:
+            await update.message.reply_text("La prioridad debe estar entre 1 y 5.")
+            return
+
+    if prioridad is None:
+        await update.message.reply_text(
+            "Falta la prioridad (1-5).\n"
+            "Uso: /func <texto> <prioridad> [estado]"
+        )
+        return
+
+    texto = " ".join(args).strip()
+    if not texto:
+        await update.message.reply_text("El texto de la funcionalidad no puede estar vacio.")
+        return
+
+    func = Funcionalidad(
+        id=_generar_id_func(texto),
+        texto=texto,
+        prioridad=prioridad,
+        estado=estado,
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente="telegram",
+    )
+    añadir_func(func)
+
+    emoji = _PRIORIDAD_EMOJI.get(prioridad, "")
+    await update.message.reply_text(
+        f"Funcionalidad guardada.\n"
+        f"ID: {func.id}\n"
+        f"Texto: {func.texto}\n"
+        f"Prioridad: {emoji} {func.prioridad}/5\n"
+        f"Estado: {func.estado}"
+    )
+
+
+async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    todas = listar_func()
+    if not todas:
+        await update.message.reply_text("No hay funcionalidades registradas.")
+        return
+
+    todas.sort(key=lambda f: (-f.prioridad, f.estado != "pendiente"))
+
+    lineas: list[str] = []
+    for i, f in enumerate(todas, 1):
+        emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
+        estado_tag = f"[{f.estado}]"
+        txt = (f.texto[:60] + "...") if len(f.texto) > 60 else f.texto
+        lineas.append(f"{i}. {emoji} P{f.prioridad} {estado_tag} {txt}")
+
+    cabecera = f"Funcionalidades ({len(todas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_MSG])
+        await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -522,6 +633,8 @@ def main() -> None:
     app.add_handler(CommandHandler("listar", cmd_listar))
     app.add_handler(CommandHandler("list", cmd_listar))
     app.add_handler(CommandHandler("ver", cmd_ver))
+    app.add_handler(CommandHandler("func", cmd_func))
+    app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))

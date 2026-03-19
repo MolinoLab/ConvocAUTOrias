@@ -1,13 +1,15 @@
 """
 API mínima para que n8n y OpenClaw invoquen las tareas del proyecto vía HTTP.
 Endpoints: POST /scrape, POST /revisar, POST /sync-caldav, POST /indexar-ideas,
-           POST /sync-nextcloud-datos, POST /generar-borrador
+           POST /sync-nextcloud-datos, POST /generar-borrador,
+           GET /funcionalidad, POST /funcionalidad
 """
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 from fastapi import FastAPI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Asegurar que el proyecto está en el path
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -71,6 +73,52 @@ class GenerarBorradorRequest(BaseModel):
 def generar_borrador(req: GenerarBorradorRequest):
     """Genera un borrador adaptado para una convocatoria y lo sube a Nextcloud."""
     return _run_script("scripts.generar_borrador", req.id)
+
+
+import hashlib
+from datetime import datetime
+
+import config
+from src.db_funcionalidad import (
+    Funcionalidad,
+    ESTADOS_VALIDOS,
+    listar as listar_func,
+    añadir as añadir_func,
+)
+
+
+class FuncionalidadRequest(BaseModel):
+    texto: str
+    prioridad: int = Field(ge=1, le=5)
+    estado: Optional[str] = "pendiente"
+
+
+@app.get("/funcionalidad")
+def get_funcionalidad():
+    """Lista todas las funcionalidades registradas."""
+    items = listar_func()
+    items.sort(key=lambda f: (-f.prioridad, f.estado != "pendiente"))
+    return [f.to_dict() for f in items]
+
+
+@app.post("/funcionalidad")
+def post_funcionalidad(req: FuncionalidadRequest):
+    """Crea una nueva funcionalidad."""
+    estado = (req.estado or "pendiente").lower()
+    if estado not in ESTADOS_VALIDOS:
+        return {"success": False, "error": f"Estado invalido. Validos: {', '.join(sorted(ESTADOS_VALIDOS))}"}
+    base = f"{datetime.now().isoformat()}::func::{req.texto[:500]}"
+    func_id = hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+    func = Funcionalidad(
+        id=func_id,
+        texto=req.texto,
+        prioridad=req.prioridad,
+        estado=estado,
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente="api",
+    )
+    añadir_func(func)
+    return {"success": True, "funcionalidad": func.to_dict()}
 
 
 @app.get("/health")
