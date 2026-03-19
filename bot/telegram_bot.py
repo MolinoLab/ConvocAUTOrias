@@ -32,7 +32,8 @@ from src.db_funcionalidad import (
     buscar_por_id as buscar_func_por_id,
     actualizar as actualizar_func,
 )
-from src.caldav_client import crear_tarea, listar_tareas
+from src.caldav_client import crear_tarea, listar_tareas, obtener_ultimo_error_tarea
+from src.deck_client import crear_tarea_deck, obtener_ultimo_error_deck
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -578,7 +579,21 @@ async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             partes.append(f"Descripcion: {descripcion}")
         await msg.edit_text("\n".join(partes))
     else:
-        await msg.edit_text("No se pudo crear la tarea. Verifica la configuracion CalDAV.")
+        caldav_error = obtener_ultimo_error_tarea()
+        ok_deck = crear_tarea_deck(titulo, descripcion=descripcion, fecha_due=fecha)
+        if ok_deck:
+            await msg.edit_text(
+                f"Tarea creada en Deck ({config.DECK_BOARD_NAME}).\n"
+                f"Titulo: {titulo}"
+            )
+            return
+
+        deck_error = obtener_ultimo_error_deck()
+        await msg.edit_text(
+            "No se pudo crear la tarea.\n"
+            f"CalDAV: {caldav_error or 'sin detalle'}\n"
+            f"Deck: {deck_error or 'sin detalle'}"
+        )
 
 
 _TAREA_PRI_EMOJI = {1: "\U0001f534", 2: "\U0001f534", 3: "\U0001f7e0", 4: "\U0001f7e0",

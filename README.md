@@ -136,12 +136,19 @@ NEXTCLOUD_URL=https://tu-nextcloud.com
 NEXTCLOUD_USER=tu_usuario
 NEXTCLOUD_PASSWORD=tu_password
 NEXTCLOUD_CARPETA=Convocatorias
+DECK_BOARD_NAME=MolinoLab
+# DECK_STACK_NAME=Pendientes
 NEXTCLOUD_IDEAS_PATH=Documents/b1tacora/b1tdreamer/Ideas
 
 # CalDAV (opcional)
-CALDAV_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/mi-calendario/
+CALDAV_URL=https://tu-nextcloud.com/remote.php/dav
 CALDAV_USER=tu_usuario
 CALDAV_PASS=tu_password
+# Nombre del calendario (se compara con el segmento de la URL, ej. .../calendars/usuario/molinolab/)
+# No uses coincidencia en la URL completa: un dominio como hub.molinolab.org contiene "molinolab".
+CALDAV_CALENDAR_NAME=MolinoLab
+# Opcional: URL exacta de la colección del calendario (sustituye al filtro por nombre)
+# CALDAV_CALENDAR_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/molinolab/
 ```
 
 ## Arquitectura Docker
