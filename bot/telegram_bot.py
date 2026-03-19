@@ -1,7 +1,8 @@
 """
 Bot Telegram que recibe URLs y comandos.
 Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
-          /func <texto> <prioridad> [estado], /listfunc, /ayuda.
+          /func <texto> <prioridad> [estado], /listfunc,
+          /tarea "titulo" [fecha] ["desc"], /listtareas, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -31,6 +32,7 @@ from src.db_funcionalidad import (
     buscar_por_id as buscar_func_por_id,
     actualizar as actualizar_func,
 )
+from src.caldav_client import crear_tarea, listar_tareas
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -200,7 +202,7 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
-_ACCIONES_AUDIO = {"idea", "funcionalidad"}
+_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea"}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -230,6 +232,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
         "/func <texto> <prioridad 1-5> [estado] - Registra una funcionalidad pendiente\n"
         "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
+        '/tarea "Titulo" [YYYY-MM-DD] ["Descripcion"] - Crea tarea en Nextcloud\n'
+        "/listtareas - Lista tareas de Nextcloud por prioridad\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
@@ -238,6 +242,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Audio: la primera palabra determina la accion:\n"
         "  idea <descripcion> - Guarda una idea\n"
         "  funcionalidad <descripcion> - Registra funcionalidad (P3, pendiente)\n"
+        "  tarea <descripcion> - Crea tarea en Nextcloud\n"
         "  Si no se reconoce accion, se guarda como idea."
     )
 
@@ -503,6 +508,120 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(texto_completo[MAX_MSG:])
 
 
+def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
+    """Parsea: "Titulo" [YYYY-MM-DD] ["Descripcion"]
+
+    Sin comillas, todo el texto (excepto una posible fecha) se trata como titulo.
+    """
+    texto = texto_raw.strip()
+    if not texto:
+        return "", None, ""
+
+    fecha = None
+    date_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", texto)
+    if date_match:
+        fecha = date_match.group(1)
+        texto = (texto[:date_match.start()] + texto[date_match.end():]).strip()
+
+    partes_quoted = re.findall(r'"([^"]*)"', texto)
+
+    if partes_quoted:
+        titulo = partes_quoted[0]
+        descripcion = partes_quoted[1] if len(partes_quoted) > 1 else ""
+    else:
+        titulo = texto
+        descripcion = ""
+
+    return titulo.strip(), fecha, descripcion.strip()
+
+
+async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/tarea"):
+        texto_raw = texto_raw[len("/tarea"):].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            'Uso: /tarea "Titulo" [YYYY-MM-DD] ["Descripcion"]\n'
+            'Ejemplo: /tarea "Comprar material" 2026-03-25 "Para laboratorio"\n'
+            "La fecha y descripcion son opcionales."
+        )
+        return
+
+    titulo, fecha, descripcion = _parsear_args_tarea(texto_raw)
+
+    if not titulo:
+        await update.message.reply_text("El titulo de la tarea no puede estar vacio.")
+        return
+
+    if fecha:
+        try:
+            datetime.strptime(fecha, "%Y-%m-%d")
+        except ValueError:
+            await update.message.reply_text(
+                f"Fecha invalida: {fecha}\nUsa formato YYYY-MM-DD (ej. 2026-03-25)"
+            )
+            return
+
+    msg = await update.message.reply_text("Creando tarea en Nextcloud...")
+    ok = crear_tarea(titulo, descripcion=descripcion, fecha_due=fecha)
+
+    if ok:
+        partes = [f"Tarea creada: {titulo}"]
+        if fecha:
+            partes.append(f"Fecha: {fecha}")
+        if descripcion:
+            partes.append(f"Descripcion: {descripcion}")
+        await msg.edit_text("\n".join(partes))
+    else:
+        await msg.edit_text("No se pudo crear la tarea. Verifica la configuracion CalDAV.")
+
+
+_TAREA_PRI_EMOJI = {1: "\U0001f534", 2: "\U0001f534", 3: "\U0001f7e0", 4: "\U0001f7e0",
+                    5: "\U0001f7e1", 6: "\U0001f7e2", 7: "\U0001f535", 8: "\U0001f535", 9: "\u26aa"}
+
+
+async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    msg = await update.message.reply_text("Consultando tareas...")
+
+    try:
+        tareas = listar_tareas()
+    except Exception as exc:
+        await msg.edit_text(f"Error al consultar tareas: {exc}")
+        return
+
+    if not tareas:
+        await msg.edit_text("No hay tareas pendientes.")
+        return
+
+    tareas.sort(key=lambda t: (t["priority"] == 0, t["priority"], t["due"] or "9999-99-99"))
+
+    lineas: list[str] = []
+    for i, t in enumerate(tareas, 1):
+        emoji = _TAREA_PRI_EMOJI.get(t["priority"], "\u2b1c")
+        fecha = f" [{t['due']}]" if t["due"] else ""
+        titulo = (t["summary"][:60] + "...") if len(t["summary"]) > 60 else t["summary"]
+        lineas.append(f"{i}. {emoji}{fecha} {titulo}")
+
+    cabecera = f"Tareas ({len(tareas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await msg.edit_text(texto_completo)
+    else:
+        await msg.edit_text(texto_completo[:MAX_MSG])
+        await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -650,6 +769,23 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Estado: {func.estado}"
             )
 
+        elif accion == "tarea":
+            if not contenido:
+                await estado.edit_text(
+                    "La tarea no puede estar vacia. Di: tarea <descripcion>"
+                )
+                return
+            ok = crear_tarea(contenido)
+            if ok:
+                await estado.edit_text(
+                    f"Tarea creada desde audio.\n"
+                    f"Titulo: {contenido}"
+                )
+            else:
+                await estado.edit_text(
+                    "No se pudo crear la tarea. Verifica la configuracion CalDAV."
+                )
+
         else:
             idea = _guardar_idea(contenido, fuente="telegram_audio")
             await estado.edit_text(
@@ -698,6 +834,8 @@ def main() -> None:
     app.add_handler(CommandHandler("ver", cmd_ver))
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
+    app.add_handler(CommandHandler("tarea", cmd_tarea))
+    app.add_handler(CommandHandler("listtareas", cmd_listtareas))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
