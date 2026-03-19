@@ -200,6 +200,26 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
+_ACCIONES_AUDIO = {"idea", "funcionalidad"}
+
+
+def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
+    """Extrae la acción (primera palabra) y el contenido restante de una transcripción.
+
+    Retorna (accion, contenido). Si la primera palabra no es una acción
+    reconocida, retorna (None, texto_original_completo).
+    """
+    normalizado = " ".join(texto.split())
+    if not normalizado:
+        return None, ""
+    partes = normalizado.split(None, 1)
+    candidato = re.sub(r"[,.:;!?]+$", "", partes[0]).lower()
+    if candidato in _ACCIONES_AUDIO:
+        contenido = partes[1].strip() if len(partes) > 1 else ""
+        return candidato, contenido
+    return None, normalizado
+
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -214,8 +234,11 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
         "/ayuda - Muestra esta ayuda\n\n"
-        "Tambien puedes enviar una URL directamente para subirla.\n"
-        "Si envias un audio, se tratara como idea automaticamente."
+        "Tambien puedes enviar una URL directamente para subirla.\n\n"
+        "Audio: la primera palabra determina la accion:\n"
+        "  idea <descripcion> - Guarda una idea\n"
+        "  funcionalidad <descripcion> - Registra funcionalidad (P3, pendiente)\n"
+        "  Si no se reconoce accion, se guarda como idea."
     )
 
 
@@ -554,7 +577,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Procesa audios/voice como idea por defecto."""
+    """Transcribe audio y enruta según la primera palabra (idea/funcionalidad/fallback)."""
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
@@ -589,13 +612,53 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await archivo.download_to_drive(custom_path=str(ruta_tmp))
 
         texto = _transcribir_audio(ruta_tmp)
-        idea = _guardar_idea(texto, fuente="telegram_audio")
-        await estado.edit_text(
-            f"Idea guardada desde audio.\n"
-            f"ID: {idea.id}\n"
-            f"Resumen: {idea.resumen}\n"
-            f"Ruta: {idea.ruta}"
-        )
+        accion, contenido = _parsear_accion_audio(texto)
+
+        if accion == "idea":
+            if not contenido:
+                await estado.edit_text("La idea no puede estar vacia. Di: idea <descripcion>")
+                return
+            idea = _guardar_idea(contenido, fuente="telegram_audio")
+            await estado.edit_text(
+                f"Idea guardada desde audio.\n"
+                f"ID: {idea.id}\n"
+                f"Resumen: {idea.resumen}\n"
+                f"Ruta: {idea.ruta}"
+            )
+
+        elif accion == "funcionalidad":
+            if not contenido:
+                await estado.edit_text(
+                    "La funcionalidad no puede estar vacia. Di: funcionalidad <descripcion>"
+                )
+                return
+            func = Funcionalidad(
+                id=_generar_id_func(contenido),
+                texto=contenido,
+                prioridad=3,
+                estado="pendiente",
+                fecha_ingesta=datetime.now().isoformat(),
+                fuente="telegram_audio",
+            )
+            añadir_func(func)
+            emoji = _PRIORIDAD_EMOJI.get(func.prioridad, "")
+            await estado.edit_text(
+                f"Funcionalidad guardada desde audio.\n"
+                f"ID: {func.id}\n"
+                f"Texto: {func.texto}\n"
+                f"Prioridad: {emoji} {func.prioridad}/5\n"
+                f"Estado: {func.estado}"
+            )
+
+        else:
+            idea = _guardar_idea(contenido, fuente="telegram_audio")
+            await estado.edit_text(
+                f"Idea guardada desde audio (sin accion detectada).\n"
+                f"ID: {idea.id}\n"
+                f"Resumen: {idea.resumen}\n"
+                f"Ruta: {idea.ruta}"
+            )
+
     except Exception as exc:
         await estado.edit_text(f"No se pudo procesar el audio: {exc}")
     finally:
