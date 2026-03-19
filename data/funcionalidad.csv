@@ -1,1 +1,6 @@
 id,texto,prioridad,estado,fecha_ingesta,fuente
+b0518dbcde236700,el listtareas no funciona correctamente,4,pendiente,2026-03-20T00:02:38.411008,telegram
+2903c24d0459a7de,"que cuando le pida, cuando fue la última vez que compré comida para los pollo, pedí comida para los perros, pueda revisar en el calendario y me diga cuánto tiempo ha pasado.",3,pendiente,2026-03-20T00:21:22.296070,telegram_audio
+b1916ad669ac418e,que le pueda decir cuántos huevos han puesto las hallinas en el día y lleve un resistro.,3,pendiente,2026-03-20T00:21:57.305081,telegram_audio
+72a8e0da04f07e5c,"Todas las mañanas a las 10 o 9.5 de la mañana me haga un resumen de lo que tengo en el día. Incluso un mensaje el día anterior para prepararme para lo que me espera el día siguiente. Reuniones y demás, todo lo del calendario y las tareas.",3,pendiente,2026-03-20T00:22:39.152223,telegram_audio
+60251ebb659e0ed9,que yo pueda enviar órdenes en plan listar ideas o X sin tener lo que escribir que pueda ser por audio.,3,pendiente,2026-03-20T00:23:26.831507,telegram_audio

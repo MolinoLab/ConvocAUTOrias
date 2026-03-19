@@ -2,7 +2,7 @@
 Bot Telegram que recibe URLs y comandos.
 Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
           /func <texto> <prioridad> [estado], /listfunc,
-          /tarea "titulo" [fecha] ["desc"], /listtareas, /ayuda.
+          /tarea "titulo" [fecha] ["desc"], /evento <nombre> <fecha> [hora], /listtareas, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -32,7 +32,7 @@ from src.db_funcionalidad import (
     buscar_por_id as buscar_func_por_id,
     actualizar as actualizar_func,
 )
-from src.caldav_client import crear_tarea, listar_tareas, obtener_ultimo_error_tarea
+from src.caldav_client import crear_evento, listar_tareas, obtener_ultimo_error_evento
 from src.deck_client import crear_tarea_deck, obtener_ultimo_error_deck
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
@@ -203,7 +203,7 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
-_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea"}
+_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea", "evento"}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -233,8 +233,10 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
         "/func <texto> <prioridad 1-5> [estado] - Registra una funcionalidad pendiente\n"
         "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
-        '/tarea "Titulo" [YYYY-MM-DD] ["Descripcion"] - Crea tarea en Nextcloud\n'
-        "/listtareas - Lista tareas de Nextcloud por prioridad\n"
+        '/tarea "Titulo" [YYYY-MM-DD] ["Descripcion"] - Crea tarjeta en Nextcloud Deck\n'
+        "/evento <nombre> <fecha> [HH:MM] - Crea evento en calendario CalDAV "
+        "(fecha: DD/MM/YY, 20/3, solo dia 1-31 en mes actual; hora opcional, 1 h duracion)\n"
+        "/listtareas - Lista tareas del calendario CalDAV por prioridad\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
@@ -243,7 +245,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Audio: la primera palabra determina la accion:\n"
         "  idea <descripcion> - Guarda una idea\n"
         "  funcionalidad <descripcion> - Registra funcionalidad (P3, pendiente)\n"
-        "  tarea <descripcion> - Crea tarea en Nextcloud\n"
+        "  tarea <titulo> [YYYY-MM-DD] - Crea tarjeta en Deck (fecha opcional)\n"
+        "  evento <nombre> <fecha> [HH:MM] - Crea evento en calendario\n"
         "  Si no se reconoce accion, se guarda como idea."
     )
 
@@ -536,6 +539,102 @@ def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
     return titulo.strip(), fecha, descripcion.strip()
 
 
+def _fecha_evento_ddmmyyyy_a_iso(fecha_dd_mm_yyyy: str) -> str | None:
+    """Valida DD-MM-YYYY y devuelve YYYY-MM-DD para CalDAV; None si la fecha no es valida."""
+    try:
+        d = datetime.strptime(fecha_dd_mm_yyyy.strip(), "%d-%m-%Y")
+        return d.strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _anio_evento_dos_cifras(y: int) -> int:
+    """26 -> 2026; 99 -> 2099."""
+    if 0 <= y < 100:
+        return 2000 + y
+    return y
+
+
+def _extraer_fecha_evento_flexible(texto: str) -> tuple[str | None, str]:
+    """
+    Extrae fecha como DD-MM-YYYY (normalizada) y devuelve el texto sin ese fragmento.
+    Orden día-mes-año; separadores / o -; año de 2 cifras se completa con 20xx.
+    Sin año: D/M o D-M usa el año en curso. Solo un número 1-31: día en mes y año actuales.
+    """
+    now = datetime.now()
+    sep = r"[/-]"
+
+    m = re.search(
+        rf"\b(\d{{1,2}}){sep}(\d{{1,2}}){sep}(\d{{2}}|\d{{4}})\b",
+        texto,
+    )
+    if m:
+        d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        y = _anio_evento_dos_cifras(y)
+        try:
+            datetime(y, mo, d)
+        except ValueError:
+            return None, texto
+        fecha = f"{d:02d}-{mo:02d}-{y}"
+        resto = (texto[: m.start()] + texto[m.end() :]).strip()
+        return fecha, resto
+
+    m = re.search(rf"\b(\d{{1,2}}){sep}(\d{{1,2}})\b", texto)
+    if m:
+        d, mo = int(m.group(1)), int(m.group(2))
+        y = now.year
+        try:
+            datetime(y, mo, d)
+        except ValueError:
+            return None, texto
+        fecha = f"{d:02d}-{mo:02d}-{y}"
+        resto = (texto[: m.start()] + texto[m.end() :]).strip()
+        return fecha, resto
+
+    cands = [
+        m
+        for m in re.finditer(r"\b(\d{1,2})\b", texto)
+        if 1 <= int(m.group(1)) <= 31
+    ]
+    if len(cands) == 1:
+        d = int(cands[0].group(1))
+        try:
+            datetime(now.year, now.month, d)
+        except ValueError:
+            return None, texto
+        fecha = f"{d:02d}-{now.month:02d}-{now.year}"
+        m0 = cands[0]
+        resto = (texto[: m0.start()] + texto[m0.end() :]).strip()
+        return fecha, resto
+
+    return None, texto
+
+
+def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
+    """Parsea nombre del evento, fecha flexible (DD/MM/YY, etc.) y hora opcional HH:MM."""
+    texto = texto_raw.strip()
+    if not texto:
+        return "", None, None
+
+    time_match = re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", texto)
+    if time_match:
+        hora = time_match.group(0)
+        texto_sin_hora = (texto[: time_match.start()] + texto[time_match.end() :]).strip()
+    else:
+        hora = None
+        texto_sin_hora = texto
+
+    fecha, titulo_raw = _extraer_fecha_evento_flexible(texto_sin_hora)
+
+    partes_quoted = re.findall(r'"([^"]*)"', titulo_raw)
+    if partes_quoted:
+        titulo = partes_quoted[0]
+    else:
+        titulo = titulo_raw
+
+    return titulo.strip(), fecha, hora
+
+
 async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -568,31 +667,83 @@ async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
 
-    msg = await update.message.reply_text("Creando tarea en Nextcloud...")
-    ok = crear_tarea(titulo, descripcion=descripcion, fecha_due=fecha)
+    msg = await update.message.reply_text("Creando tarea en Deck...")
+    ok = crear_tarea_deck(titulo, descripcion=descripcion, fecha_due=fecha)
 
     if ok:
-        partes = [f"Tarea creada: {titulo}"]
+        partes = [f"Tarea creada en Deck ({config.DECK_BOARD_NAME}): {titulo}"]
         if fecha:
-            partes.append(f"Fecha: {fecha}")
+            partes.append(f"Fecha limite: {fecha}")
         if descripcion:
             partes.append(f"Descripcion: {descripcion}")
         await msg.edit_text("\n".join(partes))
     else:
-        caldav_error = obtener_ultimo_error_tarea()
-        ok_deck = crear_tarea_deck(titulo, descripcion=descripcion, fecha_due=fecha)
-        if ok_deck:
-            await msg.edit_text(
-                f"Tarea creada en Deck ({config.DECK_BOARD_NAME}).\n"
-                f"Titulo: {titulo}"
+        deck_error = obtener_ultimo_error_deck()
+        await msg.edit_text(
+            "No se pudo crear la tarea en Deck.\n"
+            f"{deck_error or 'sin detalle'}"
+        )
+
+
+async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/evento"):
+        texto_raw = texto_raw[len("/evento") :].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            "Uso: /evento <nombre> <fecha> [HH:MM]\n"
+            "Fecha: DD-MM-AAAA o DD/MM/AAAA; año de 2 cifras (26 -> 2026); "
+            "DD/MM o DD-MM sin año = año actual; un solo numero 1-31 = dia del mes actual.\n"
+            "Separadores / o -. Ejemplo: /evento Reunion 20/3/26 14:30"
+        )
+        return
+
+    nombre, fecha_ev, hora_ev = _parsear_args_evento(texto_raw)
+
+    if not nombre:
+        await update.message.reply_text("El nombre del evento no puede estar vacio.")
+        return
+    if not fecha_ev:
+        await update.message.reply_text(
+            "Falta una fecha reconocible (ej. 20-03-2026, 20/3/26, 20/3, o solo el dia 15 en el mes actual)."
+        )
+        return
+
+    fecha_iso = _fecha_evento_ddmmyyyy_a_iso(fecha_ev)
+    if fecha_iso is None:
+        await update.message.reply_text(
+            f"Fecha invalida: {fecha_ev}\n"
+            "Usa dia-mes-año con / o -; año de 2 cifras; sin año = año actual; "
+            "un solo numero 1-31 = dia en el mes actual."
+        )
+        return
+
+    if hora_ev:
+        try:
+            datetime.strptime(hora_ev, "%H:%M")
+        except ValueError:
+            await update.message.reply_text(
+                f"Hora invalida: {hora_ev}\nUsa formato HH:MM en 24 h (ej. 14:30)"
             )
             return
 
-        deck_error = obtener_ultimo_error_deck()
+    msg = await update.message.reply_text("Creando evento en el calendario...")
+    ok = crear_evento(nombre, fecha_iso, hora=hora_ev)
+
+    if ok:
+        partes = [f"Evento creado: {nombre}", f"Fecha: {fecha_ev}"]
+        if hora_ev:
+            partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+        await msg.edit_text("\n".join(partes))
+    else:
+        err = obtener_ultimo_error_evento()
         await msg.edit_text(
-            "No se pudo crear la tarea.\n"
-            f"CalDAV: {caldav_error or 'sin detalle'}\n"
-            f"Deck: {deck_error or 'sin detalle'}"
+            "No se pudo crear el evento en CalDAV.\n" + (err or "sin detalle")
         )
 
 
@@ -785,32 +936,81 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
 
         elif accion == "tarea":
-            if not contenido:
+            titulo_t, fecha_t, descripcion_t = _parsear_args_tarea(contenido)
+            if not titulo_t:
                 await estado.edit_text(
-                    "La tarea no puede estar vacia. Di: tarea <descripcion>"
+                    "La tarea no puede estar vacia. Di: tarea <titulo> [fecha YYYY-MM-DD]"
                 )
                 return
-            ok = crear_tarea(contenido)
+            if fecha_t:
+                try:
+                    datetime.strptime(fecha_t, "%Y-%m-%d")
+                except ValueError:
+                    await estado.edit_text(
+                        f"Fecha invalida en audio: {fecha_t}\nUsa YYYY-MM-DD"
+                    )
+                    return
+            ok = crear_tarea_deck(
+                titulo_t, descripcion=descripcion_t, fecha_due=fecha_t
+            )
             if ok:
-                await estado.edit_text(
-                    f"Tarea creada desde audio.\n"
-                    f"Titulo: {contenido}"
-                )
+                lineas = [
+                    f"Tarea creada en Deck ({config.DECK_BOARD_NAME}) desde audio.",
+                    f"Titulo: {titulo_t}",
+                ]
+                if fecha_t:
+                    lineas.append(f"Fecha limite: {fecha_t}")
+                await estado.edit_text("\n".join(lineas))
             else:
-                caldav_error = obtener_ultimo_error_tarea()
-                ok_deck = crear_tarea_deck(contenido)
-                if ok_deck:
+                deck_error = obtener_ultimo_error_deck()
+                await estado.edit_text(
+                    "No se pudo crear la tarea en Deck desde audio.\n"
+                    f"{deck_error or 'sin detalle'}"
+                )
+
+        elif accion == "evento":
+            nombre_ev, fecha_ev, hora_ev = _parsear_args_evento(contenido)
+            if not fecha_ev:
+                await estado.edit_text(
+                    "El evento necesita una fecha (ej. 20/3/26, 20-03-2026, 20/3, o solo el dia).\n"
+                    "Opcional HH:MM. Ejemplo: evento reunion 20/3 15:30"
+                )
+                return
+            if not nombre_ev:
+                await estado.edit_text(
+                    "El nombre del evento no puede estar vacio tras la transcripcion."
+                )
+                return
+            fecha_iso_ev = _fecha_evento_ddmmyyyy_a_iso(fecha_ev)
+            if fecha_iso_ev is None:
+                await estado.edit_text(
+                    f"Fecha invalida: {fecha_ev}\n"
+                    "Usa dia-mes con / o -; año opcional (2 cifras -> 20xx)."
+                )
+                return
+            if hora_ev:
+                try:
+                    datetime.strptime(hora_ev, "%H:%M")
+                except ValueError:
                     await estado.edit_text(
-                        f"Tarea creada en Deck ({config.DECK_BOARD_NAME}) desde audio.\n"
-                        f"Titulo: {contenido}"
+                        f"Hora invalida: {hora_ev}\nUsa HH:MM en 24 h"
                     )
-                else:
-                    deck_error = obtener_ultimo_error_deck()
-                    await estado.edit_text(
-                        "No se pudo crear la tarea desde audio.\n"
-                        f"CalDAV: {caldav_error or 'sin detalle'}\n"
-                        f"Deck: {deck_error or 'sin detalle'}"
-                    )
+                    return
+            ok = crear_evento(nombre_ev, fecha_iso_ev, hora=hora_ev)
+            if ok:
+                partes = [
+                    f"Evento creado desde audio: {nombre_ev}",
+                    f"Fecha: {fecha_ev}",
+                ]
+                if hora_ev:
+                    partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+                await estado.edit_text("\n".join(partes))
+            else:
+                err_ev = obtener_ultimo_error_evento()
+                await estado.edit_text(
+                    "No se pudo crear el evento desde audio.\n"
+                    + (err_ev or "sin detalle")
+                )
 
         else:
             idea = _guardar_idea(contenido, fuente="telegram_audio")
@@ -861,6 +1061,7 @@ def main() -> None:
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
+    app.add_handler(CommandHandler("evento", cmd_evento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))

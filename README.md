@@ -149,6 +149,9 @@ CALDAV_PASS=tu_password
 CALDAV_CALENDAR_NAME=MolinoLab
 # Opcional: URL exacta de la colección del calendario (sustituye al filtro por nombre)
 # CALDAV_CALENDAR_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/molinolab/
+# Si CALDAV_USER es otra cuenta (p. ej. bot de servicio), el segmento .../calendars/USUARIO/...
+# debe ser el de CALDAV_USER, o bien comparte el calendario con esa cuenta: el bot resolverá la
+# colección real vía CalDAV usando el slug (molinolab) o CALDAV_CALENDAR_NAME.
 ```
 
 ## Arquitectura Docker

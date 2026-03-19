@@ -1,9 +1,10 @@
 """
 Cliente CalDAV para crear eventos con plazos de convocatorias y tareas (VTODO).
 """
+import json
 import sys
 import uuid
-from datetime import date as _date_type
+from datetime import date as _date_type, datetime, time, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +23,39 @@ except ImportError:
 
 
 _LAST_TAREA_ERROR = ""
+_LAST_EVENTO_ERROR = ""
+
+# #region agent log
+_DEBUG_LOG_PATH = Path(__file__).resolve().parent.parent.parent / "debug-019d14.log"
+
+
+def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict, run_id: str = "verify") -> None:
+    try:
+        payload = {
+            "sessionId": "019d14",
+            "runId": run_id,
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(datetime.now().timestamp() * 1000),
+        }
+        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+# #endregion
+
+
+def _set_last_evento_error(message: str) -> None:
+    global _LAST_EVENTO_ERROR
+    _LAST_EVENTO_ERROR = (message or "").strip()[:600]
+
+
+def obtener_ultimo_error_evento() -> str:
+    return _LAST_EVENTO_ERROR
 
 
 def _set_last_tarea_error(message: str) -> None:
@@ -54,6 +88,19 @@ def _calendar_slug_from_dav_url(url: str) -> str | None:
     return None
 
 
+def _calendar_owner_segment_from_url(url: str) -> str | None:
+    """Segmento de usuario en .../calendars/{este}/{calendario}/."""
+    path = urlparse(str(url)).path.strip("/")
+    parts = [p for p in path.split("/") if p]
+    try:
+        i = parts.index("calendars")
+        if i + 1 < len(parts):
+            return parts[i + 1]
+    except ValueError:
+        pass
+    return None
+
+
 def _matches_calendar_display_name(url: str, name: str) -> bool:
     """True si el calendario en la URL corresponde al nombre configurado (no usa el host)."""
     name = name.strip()
@@ -65,6 +112,80 @@ def _matches_calendar_display_name(url: str, name: str) -> bool:
     return _norm_calendar_token(slug) == _norm_calendar_token(name)
 
 
+def _matches_calendar_live_display_name(cal, name: str) -> bool:
+    """Compara el nombre mostrado del calendario en el servidor (útil en calendarios compartidos)."""
+    name = (name or "").strip()
+    if not name:
+        return False
+    try:
+        dn = cal.get_display_name()
+    except Exception:
+        return False
+    if not dn:
+        return False
+    return _norm_calendar_token(str(dn)) == _norm_calendar_token(name)
+
+
+def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
+    """
+    Lista calendarios del usuario autenticado que corresponden a la URL de referencia
+    (mismo slug en path o mismo nombre mostrado que CALDAV_CALENDAR_NAME).
+    """
+    target_slug = _calendar_slug_from_dav_url(url_cal)
+    try:
+        principal = client.principal()
+        all_cals = list(principal.calendars())
+    except Exception:
+        return []
+
+    by_slug: list = []
+    for c in all_cals:
+        slug = _calendar_slug_from_dav_url(str(getattr(c, "url", "")))
+        if (
+            target_slug
+            and slug
+            and _norm_calendar_token(slug) == _norm_calendar_token(target_slug)
+        ):
+            by_slug.append(c)
+    if by_slug:
+        # #region agent log
+        _agent_dbg(
+            "H6",
+            "caldav_client.py:_principal_calendars_matching_config_url",
+            "match por slug bajo principal autenticado",
+            {"count": len(by_slug)},
+        )
+        # #endregion
+        return by_slug
+
+    by_name: list = []
+    cal_name = (config.CALDAV_CALENDAR_NAME or "").strip()
+    if cal_name:
+        for c in all_cals:
+            if _matches_calendar_live_display_name(c, cal_name):
+                by_name.append(c)
+    if by_name:
+        # #region agent log
+        _agent_dbg(
+            "H6",
+            "caldav_client.py:_calendars_via_principal_for_config_url",
+            "match por display name",
+            {"count": len(by_name)},
+        )
+        # #endregion
+        return by_name
+
+    # #region agent log
+    _agent_dbg(
+        "H6",
+        "caldav_client.py:_principal_calendars_matching_config_url",
+        "sin match principal",
+        {"principal_calendar_count": len(all_cals)},
+    )
+    # #endregion
+    return []
+
+
 def _resolve_target_calendars(client) -> list:
     """
     Calendarios objetivo: CALDAV_CALENDAR_URL, o filtro por CALDAV_CALENDAR_NAME en el path,
@@ -72,6 +193,14 @@ def _resolve_target_calendars(client) -> list:
     """
     if config.CALDAV_CALENDAR_URL:
         url_cal = config.CALDAV_CALENDAR_URL
+        owner_in_url = (_calendar_owner_segment_from_url(url_cal) or "").strip()
+        auth_user = (config.CALDAV_USER or "").strip()
+        if (
+            owner_in_url
+            and auth_user
+            and owner_in_url.lower() != auth_user.lower()
+        ):
+            return _principal_calendars_matching_config_url(client, url_cal)
         try:
             cal = client.calendar(url=url_cal)
             return [cal]
@@ -95,8 +224,51 @@ def _resolve_target_calendars(client) -> list:
     return calendars
 
 
-def _try_put_todo_http(calendar_url: str, ical_payload: bytes) -> tuple[bool, int, str]:
-    """PUT directo a la colección CalDAV (respaldo si add_todo/save_todo fallan)."""
+def _comps_includes_vevent(comps: list) -> bool:
+    for item in comps or []:
+        if item == "VEVENT":
+            return True
+        if isinstance(item, dict) and item.get("name") == "VEVENT":
+            return True
+        name = getattr(item, "name", None)
+        if name == "VEVENT":
+            return True
+    return False
+
+
+def _calendar_supports_vevent(cal) -> bool | None:
+    """
+    True si el calendario declara VEVENT; False si declara otros tipos pero no VEVENT;
+    None si no se pudo saber (lista vacía o error PROPFIND).
+    """
+    try:
+        comps = cal.get_supported_components()
+    except Exception:
+        return None
+    if not comps:
+        return None
+    return _comps_includes_vevent(comps)
+
+
+def _sort_calendars_for_events(calendars: list) -> list:
+    """Prioriza colecciones que declaran VEVENT (evita listas solo VTODO que suelen dar 404 a VEVENT)."""
+
+    def key(c):
+        path = urlparse(str(getattr(c, "url", ""))).path
+        sup = _calendar_supports_vevent(c)
+        if sup is True:
+            tier = 0
+        elif sup is None:
+            tier = 1
+        else:
+            tier = 2
+        return (tier, path)
+
+    return sorted(calendars, key=key)
+
+
+def _try_put_ics_http(calendar_url: str, ical_payload: bytes) -> tuple[bool, int, str]:
+    """PUT directo de un .ics en la colección CalDAV (respaldo si add_* falla)."""
     try:
         import requests
         from requests.auth import HTTPBasicAuth
@@ -138,52 +310,201 @@ def _conectar_calendario():
         return None
 
 
-def crear_evento(titulo: str, fecha_fin: str, descripcion: str = "", url: str = "") -> bool:
+def crear_evento(
+    titulo: str,
+    fecha: str,
+    descripcion: str = "",
+    url: str = "",
+    hora: str | None = None,
+) -> bool:
     """
-    Crea un evento en el calendario Nextcloud/CalDAV.
-    fecha_fin: ISO date o datetime string (ej. 2025-11-16 o 2025-11-16T23:59:59)
+    Crea un evento en el calendario Nextcloud/CalDAV (colección según CALDAV_*).
+    fecha: YYYY-MM-DD, o legado: datetime ISO compacto si no coincide con solo fecha.
+    hora: opcional HH:MM (24 h); el evento dura 1 hora desde ese inicio.
     """
+    _set_last_evento_error("")
     if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        _set_last_evento_error("Configuracion CalDAV incompleta")
         return False
     if not caldav or not Calendar or not Event:
+        _set_last_evento_error("Dependencia caldav/icalendar no disponible")
         return False
+
     try:
         client = caldav.DAVClient(
             config.CALDAV_URL,
             username=config.CALDAV_USER,
             password=config.CALDAV_PASS,
         )
-        principal = client.principal()
-        calendars = principal.calendars()
-        if not calendars:
-            return False
-        calendar = calendars[0]
-
-        # Crear evento iCalendar
-        cal = Calendar()
-        cal.add("prodid", "-//ConvocAUTOrias//ES")
-        cal.add("version", "2.0")
-
-        event = Event()
-        event.add("uid", str(uuid.uuid4()))
-        event.add("summary", titulo[:255])
-        if descripcion or url:
-            event.add("description", f"{descripcion}\n\nURL: {url}" if url else descripcion)
-
-        # Parsear fecha
-        dt_str = fecha_fin.replace("-", "").replace(":", "").replace("T", "")[:15]
-        if len(dt_str) == 8:
-            event.add("dtstart", dt_str + "T090000")
-            event.add("dtend", dt_str + "T235959")
-        else:
-            event.add("dtstart", dt_str[:8] + "T090000")
-            event.add("dtend", dt_str)
-
-        cal.add_component(event)
-        calendar.add_event(cal.to_ical())
-        return True
-    except Exception:
+        calendars = _resolve_target_calendars(client)
+    except Exception as exc:
+        _set_last_evento_error(f"Error conectando CalDAV: {str(exc)[:180]}")
         return False
+
+    if not calendars:
+        url_cal = (config.CALDAV_CALENDAR_URL or "").strip()
+        own_url = _calendar_owner_segment_from_url(url_cal) if url_cal else ""
+        auth_u = (config.CALDAV_USER or "").strip()
+        if (
+            url_cal
+            and own_url
+            and auth_u
+            and own_url.lower() != auth_u.lower()
+        ):
+            _set_last_evento_error(
+                "Cuenta CalDAV distinta del propietario en CALDAV_CALENDAR_URL: no hay calendario "
+                "visible con ese slug ni con CALDAV_CALENDAR_NAME. Comparte el calendario con "
+                "CALDAV_USER o pon CALDAV_CALENDAR_URL bajo .../calendars/<CALDAV_USER>/..."
+            )
+        else:
+            _set_last_evento_error("No se encontro calendario objetivo en CalDAV")
+        return False
+
+    fecha_norm = (fecha or "").strip()
+
+    cal = Calendar()
+    cal.add("prodid", "-//ConvocAUTOrias//ES")
+    cal.add("version", "2.0")
+
+    event = Event()
+    event.add("uid", str(uuid.uuid4()))
+    event.add("summary", titulo[:255])
+    if descripcion or url:
+        event.add("description", f"{descripcion}\n\nURL: {url}" if url else descripcion)
+
+    try:
+        # #region agent log
+        _agent_dbg(
+            "H1",
+            "caldav_client.py:crear_evento",
+            "entrada crear_evento",
+            {"tiene_hora": bool((hora or "").strip()), "fecha_len": len(fecha_norm)},
+        )
+        # #endregion
+        if hora:
+            h = hora.strip()
+            datetime.strptime(h, "%H:%M")
+            d0 = datetime.strptime(f"{fecha_norm} {h}", "%Y-%m-%d %H:%M")
+            d1 = d0 + timedelta(hours=1)
+            event.add("dtstart", d0)
+            event.add("dtend", d1)
+        else:
+            try:
+                d_only = datetime.strptime(fecha_norm, "%Y-%m-%d").date()
+                d0 = datetime.combine(d_only, time(9, 0, 0))
+                d1 = datetime.combine(d_only, time(23, 59, 59))
+                event.add("dtstart", d0)
+                event.add("dtend", d1)
+            except ValueError:
+                dt_str = fecha_norm.replace("-", "").replace(":", "").replace("T", "")[:15]
+                if len(dt_str) == 8:
+                    d_only = datetime.strptime(dt_str, "%Y%m%d").date()
+                else:
+                    d_only = datetime.strptime(dt_str[:8], "%Y%m%d").date()
+                d0 = datetime.combine(d_only, time(9, 0, 0))
+                d1 = datetime.combine(d_only, time(23, 59, 59))
+                event.add("dtstart", d0)
+                event.add("dtend", d1)
+        # #region agent log
+        ds = event.get("dtstart")
+        de = event.get("dtend")
+        _agent_dbg(
+            "H2",
+            "caldav_client.py:crear_evento",
+            "dtstart/dtend asignados",
+            {
+                "dtstart_type": type(ds.dt if ds else None).__name__,
+                "dtend_type": type(de.dt if de else None).__name__,
+            },
+        )
+        # #endregion
+    except ValueError as exc:
+        _set_last_evento_error(f"Fecha u hora invalida: {str(exc)[:120]}")
+        return False
+
+    cal.add_component(event)
+    ical_raw = cal.to_ical()
+    if isinstance(ical_raw, str):
+        ical_payload = ical_raw.encode("utf-8")
+    else:
+        ical_payload = ical_raw
+
+    ordered = _sort_calendars_for_events(calendars)
+    ultimo_detalle = ""
+
+    for calendar in ordered:
+        cal_url = str(getattr(calendar, "url", ""))
+        path_log = urlparse(cal_url).path[-160:]
+        vev = _calendar_supports_vevent(calendar)
+        # #region agent log
+        _agent_dbg(
+            "H4",
+            "caldav_client.py:crear_evento",
+            "intento calendario",
+            {"path_suffix": path_log, "supports_vevent": vev},
+        )
+        # #endregion
+        try:
+            calendar.add_event(ical_payload)
+            # #region agent log
+            _agent_dbg(
+                "H3",
+                "caldav_client.py:crear_evento",
+                "add_event ok",
+                {"path_suffix": path_log},
+            )
+            # #endregion
+            return True
+        except Exception as exc_add:
+            ultimo_detalle = str(exc_add)[:200]
+            try:
+                calendar.save_event(ical_payload)
+                _agent_dbg(
+                    "H3",
+                    "caldav_client.py:crear_evento",
+                    "save_event ok",
+                    {"path_suffix": path_log},
+                )
+                return True
+            except Exception as exc_save:
+                ok_put, status_put, body_put = _try_put_ics_http(cal_url, ical_payload)
+                # #region agent log
+                _agent_dbg(
+                    "H5",
+                    "caldav_client.py:crear_evento",
+                    "put ics respaldo",
+                    {
+                        "path_suffix": path_log,
+                        "status": status_put,
+                        "ok": ok_put,
+                        "body_prefix": (body_put or "")[:100],
+                    },
+                )
+                # #endregion
+                if ok_put:
+                    _agent_dbg(
+                        "H3",
+                        "caldav_client.py:crear_evento",
+                        "put ics ok",
+                        {"path_suffix": path_log},
+                    )
+                    return True
+                ultimo_detalle = f"{exc_save}; PUT {status_put}: {body_put[:120]}"
+
+    # #region agent log
+    _agent_dbg(
+        "H3",
+        "caldav_client.py:crear_evento",
+        "crear_evento agotado",
+        {"ultimo": ultimo_detalle[:180]},
+    )
+    # #endregion
+    hint = (
+        " Revisa CALDAV_CALENDAR_URL (coleccion de calendario con eventos) o "
+        "CALDAV_CALENDAR_NAME; una lista solo de tareas (VTODO) no acepta eventos."
+    )
+    _set_last_evento_error((ultimo_detalle or "CalDAV rechazo el evento")[:180] + hint[:200])
+    return False
 
 
 def crear_tarea(
@@ -217,7 +538,17 @@ def crear_tarea(
         return False
 
     if not calendars:
-        _set_last_tarea_error("No se encontro calendario objetivo en CalDAV")
+        url_cal = (config.CALDAV_CALENDAR_URL or "").strip()
+        own_url = _calendar_owner_segment_from_url(url_cal) if url_cal else ""
+        auth_u = (config.CALDAV_USER or "").strip()
+        if url_cal and own_url and auth_u and own_url.lower() != auth_u.lower():
+            _set_last_tarea_error(
+                "Cuenta CalDAV distinta del propietario en CALDAV_CALENDAR_URL: no hay calendario "
+                "visible con ese slug ni con CALDAV_CALENDAR_NAME. Comparte el calendario con "
+                "CALDAV_USER o ajusta la URL bajo .../calendars/<CALDAV_USER>/..."
+            )
+        else:
+            _set_last_tarea_error("No se encontro calendario objetivo en CalDAV")
         return False
 
     for idx, calendar in enumerate(calendars):
@@ -251,7 +582,7 @@ def crear_tarea(
                     calendar.save_todo(ical_payload)
                     return True
                 except Exception as exc_save:
-                    ok_put, status_put, body_put = _try_put_todo_http(calendar_url, ical_payload)
+                    ok_put, status_put, body_put = _try_put_ics_http(calendar_url, ical_payload)
                     if ok_put:
                         return True
                     _set_last_tarea_error(
