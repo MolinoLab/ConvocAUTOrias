@@ -187,13 +187,13 @@ def _guardar_idea(texto: str, fuente: str) -> Idea:
 
 def _transcribir_audio(ruta_audio: Path) -> str:
     global _WHISPER_MODEL
+    modelo = os.getenv("WHISPER_MODEL", "base").strip() or "base"
     try:
         import whisper
     except Exception as exc:
         raise RuntimeError("No se pudo importar whisper. Instala openai-whisper y ffmpeg.") from exc
 
     if _WHISPER_MODEL is None:
-        modelo = os.getenv("WHISPER_MODEL", "base").strip() or "base"
         _WHISPER_MODEL = whisper.load_model(modelo)
 
     resultado = _WHISPER_MODEL.transcribe(str(ruta_audio), language="es")
@@ -797,9 +797,20 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"Titulo: {contenido}"
                 )
             else:
-                await estado.edit_text(
-                    "No se pudo crear la tarea. Verifica la configuracion CalDAV."
-                )
+                caldav_error = obtener_ultimo_error_tarea()
+                ok_deck = crear_tarea_deck(contenido)
+                if ok_deck:
+                    await estado.edit_text(
+                        f"Tarea creada en Deck ({config.DECK_BOARD_NAME}) desde audio.\n"
+                        f"Titulo: {contenido}"
+                    )
+                else:
+                    deck_error = obtener_ultimo_error_deck()
+                    await estado.edit_text(
+                        "No se pudo crear la tarea desde audio.\n"
+                        f"CalDAV: {caldav_error or 'sin detalle'}\n"
+                        f"Deck: {deck_error or 'sin detalle'}"
+                    )
 
         else:
             idea = _guardar_idea(contenido, fuente="telegram_audio")
