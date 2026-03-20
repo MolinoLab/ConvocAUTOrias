@@ -1,7 +1,6 @@
 """
 Cliente CalDAV para crear eventos con plazos de convocatorias y tareas (VTODO).
 """
-import json
 import sys
 import uuid
 from datetime import date as _date_type, datetime, time, timedelta
@@ -24,30 +23,6 @@ except ImportError:
 
 _LAST_TAREA_ERROR = ""
 _LAST_EVENTO_ERROR = ""
-
-# #region agent log
-_DEBUG_LOG_PATH = Path(__file__).resolve().parent.parent.parent / "debug-019d14.log"
-
-
-def _agent_dbg(hypothesis_id: str, location: str, message: str, data: dict, run_id: str = "verify") -> None:
-    try:
-        payload = {
-            "sessionId": "019d14",
-            "runId": run_id,
-            "hypothesisId": hypothesis_id,
-            "location": location,
-            "message": message,
-            "data": data,
-            "timestamp": int(datetime.now().timestamp() * 1000),
-        }
-        with _DEBUG_LOG_PATH.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    except Exception:
-        pass
-
-
-# #endregion
-
 
 def _set_last_evento_error(message: str) -> None:
     global _LAST_EVENTO_ERROR
@@ -148,14 +123,6 @@ def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
         ):
             by_slug.append(c)
     if by_slug:
-        # #region agent log
-        _agent_dbg(
-            "H6",
-            "caldav_client.py:_principal_calendars_matching_config_url",
-            "match por slug bajo principal autenticado",
-            {"count": len(by_slug)},
-        )
-        # #endregion
         return by_slug
 
     by_name: list = []
@@ -165,24 +132,7 @@ def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
             if _matches_calendar_live_display_name(c, cal_name):
                 by_name.append(c)
     if by_name:
-        # #region agent log
-        _agent_dbg(
-            "H6",
-            "caldav_client.py:_calendars_via_principal_for_config_url",
-            "match por display name",
-            {"count": len(by_name)},
-        )
-        # #endregion
         return by_name
-
-    # #region agent log
-    _agent_dbg(
-        "H6",
-        "caldav_client.py:_principal_calendars_matching_config_url",
-        "sin match principal",
-        {"principal_calendar_count": len(all_cals)},
-    )
-    # #endregion
     return []
 
 
@@ -373,14 +323,6 @@ def crear_evento(
         event.add("description", f"{descripcion}\n\nURL: {url}" if url else descripcion)
 
     try:
-        # #region agent log
-        _agent_dbg(
-            "H1",
-            "caldav_client.py:crear_evento",
-            "entrada crear_evento",
-            {"tiene_hora": bool((hora or "").strip()), "fecha_len": len(fecha_norm)},
-        )
-        # #endregion
         if hora:
             h = hora.strip()
             datetime.strptime(h, "%H:%M")
@@ -405,19 +347,6 @@ def crear_evento(
                 d1 = datetime.combine(d_only, time(23, 59, 59))
                 event.add("dtstart", d0)
                 event.add("dtend", d1)
-        # #region agent log
-        ds = event.get("dtstart")
-        de = event.get("dtend")
-        _agent_dbg(
-            "H2",
-            "caldav_client.py:crear_evento",
-            "dtstart/dtend asignados",
-            {
-                "dtstart_type": type(ds.dt if ds else None).__name__,
-                "dtend_type": type(de.dt if de else None).__name__,
-            },
-        )
-        # #endregion
     except ValueError as exc:
         _set_last_evento_error(f"Fecha u hora invalida: {str(exc)[:120]}")
         return False
@@ -436,69 +365,19 @@ def crear_evento(
         cal_url = str(getattr(calendar, "url", ""))
         path_log = urlparse(cal_url).path[-160:]
         vev = _calendar_supports_vevent(calendar)
-        # #region agent log
-        _agent_dbg(
-            "H4",
-            "caldav_client.py:crear_evento",
-            "intento calendario",
-            {"path_suffix": path_log, "supports_vevent": vev},
-        )
-        # #endregion
         try:
             calendar.add_event(ical_payload)
-            # #region agent log
-            _agent_dbg(
-                "H3",
-                "caldav_client.py:crear_evento",
-                "add_event ok",
-                {"path_suffix": path_log},
-            )
-            # #endregion
             return True
         except Exception as exc_add:
             ultimo_detalle = str(exc_add)[:200]
             try:
                 calendar.save_event(ical_payload)
-                _agent_dbg(
-                    "H3",
-                    "caldav_client.py:crear_evento",
-                    "save_event ok",
-                    {"path_suffix": path_log},
-                )
                 return True
             except Exception as exc_save:
                 ok_put, status_put, body_put = _try_put_ics_http(cal_url, ical_payload)
-                # #region agent log
-                _agent_dbg(
-                    "H5",
-                    "caldav_client.py:crear_evento",
-                    "put ics respaldo",
-                    {
-                        "path_suffix": path_log,
-                        "status": status_put,
-                        "ok": ok_put,
-                        "body_prefix": (body_put or "")[:100],
-                    },
-                )
-                # #endregion
                 if ok_put:
-                    _agent_dbg(
-                        "H3",
-                        "caldav_client.py:crear_evento",
-                        "put ics ok",
-                        {"path_suffix": path_log},
-                    )
                     return True
                 ultimo_detalle = f"{exc_save}; PUT {status_put}: {body_put[:120]}"
-
-    # #region agent log
-    _agent_dbg(
-        "H3",
-        "caldav_client.py:crear_evento",
-        "crear_evento agotado",
-        {"ultimo": ultimo_detalle[:180]},
-    )
-    # #endregion
     hint = (
         " Revisa CALDAV_CALENDAR_URL (coleccion de calendario con eventos) o "
         "CALDAV_CALENDAR_NAME; una lista solo de tareas (VTODO) no acepta eventos."
