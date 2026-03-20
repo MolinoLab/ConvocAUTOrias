@@ -114,6 +114,15 @@ def actualizar_csv(func: Funcionalidad) -> bool:
     return False
 
 
+def eliminar_csv(id_buscar: str) -> bool:
+    items = leer_csv()
+    nuevos = [x for x in items if x.id != id_buscar]
+    if len(nuevos) == len(items):
+        return False
+    escribir_csv(nuevos)
+    return True
+
+
 # --- SQLite ---
 
 def _crear_tabla(conn: sqlite3.Connection) -> None:
@@ -184,6 +193,16 @@ def actualizar_sqlite(func: Funcionalidad) -> bool:
         conn.close()
 
 
+def eliminar_sqlite(id_buscar: str) -> bool:
+    conn = _conexion_sqlite()
+    try:
+        cur = conn.execute("DELETE FROM funcionalidad WHERE id = ?", (id_buscar,))
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
 # --- API unificada (CSV por defecto, SQLite si existe .db) ---
 
 def usar_sqlite() -> bool:
@@ -211,3 +230,10 @@ def actualizar(func: Funcionalidad) -> bool:
     if usar_sqlite():
         return actualizar_sqlite(func)
     return actualizar_csv(func)
+
+
+def eliminar(id_buscar: str) -> bool:
+    """Elimina una funcionalidad por id. True si existía y se borró."""
+    if usar_sqlite():
+        return eliminar_sqlite(id_buscar)
+    return eliminar_csv(id_buscar)

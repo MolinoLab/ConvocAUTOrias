@@ -513,7 +513,156 @@ def listar_tareas(include_completed: bool = False) -> list[dict]:
                         "due": due_str,
                         "priority": pri_val,
                         "status": str(comp.get("status") or ""),
+                        "uid": str(comp.get("uid") or ""),
+                        "href": str(getattr(todo_obj, "url", "") or ""),
                     })
         except Exception:
             continue
     return resultado
+
+
+def _vevent_start_for_sort(comp) -> datetime | None:
+    """Extrae inicio del VEVENT como datetime naive (fecha a medianoche si es date)."""
+    ds = comp.get("dtstart")
+    if not ds:
+        return None
+    dt = ds.dt if hasattr(ds, "dt") else ds
+    if hasattr(dt, "hour"):
+        if getattr(dt, "tzinfo", None):
+            return dt.replace(tzinfo=None)
+        return dt
+    if hasattr(dt, "year"):
+        return datetime.combine(dt, time.min)
+    return None
+
+
+def _vevent_summary_uid(comp) -> tuple[str, str]:
+    summ = str(comp.get("summary") or "").strip()
+    uid = str(comp.get("uid") or "").strip()
+    return summ, uid
+
+
+def listar_eventos_proximos_dias(dias: int) -> list[dict]:
+    """
+    Eventos VEVENT con inicio en la ventana [hoy 00:00 local, hoy + dias) (dias = 7 -> 7 días desde hoy).
+    Consulta todos los calendarios objetivo que declaran VEVENT (orden _sort_calendars_for_events).
+    Cada dict: summary, start_iso (YYYY-MM-DD o YYYY-MM-DD HH:MM), sort_key (datetime), uid, url
+    """
+    _set_last_evento_error("")
+    if dias < 1:
+        dias = 1
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        _set_last_evento_error("Configuracion CalDAV incompleta")
+        return []
+    if not caldav or not Calendar:
+        _set_last_evento_error("Dependencia caldav/icalendar no disponible")
+        return []
+
+    try:
+        client = caldav.DAVClient(
+            config.CALDAV_URL,
+            username=config.CALDAV_USER,
+            password=config.CALDAV_PASS,
+        )
+        calendars = _resolve_target_calendars(client)
+    except Exception as exc:
+        _set_last_evento_error(f"Error conectando CalDAV: {str(exc)[:180]}")
+        return []
+
+    if not calendars:
+        _set_last_evento_error("No se encontro calendario objetivo en CalDAV")
+        return []
+
+    today_d = datetime.now().date()
+    win_start = datetime.combine(today_d, time.min)
+    win_end_excl = win_start + timedelta(days=int(dias))
+
+    ordered = _sort_calendars_for_events(calendars)
+    seen_uid: set[str] = set()
+    resultado: list[dict] = []
+
+    for calendar in ordered:
+        if _calendar_supports_vevent(calendar) is False:
+            continue
+        try:
+            found = calendar.date_search(
+                win_start,
+                win_end_excl,
+                expand=False,
+                compfilter="VEVENT",
+            )
+        except Exception:
+            continue
+        if not found:
+            continue
+
+        for ev in found:
+            url = str(getattr(ev, "url", "") or "").strip()
+            try:
+                raw = ev.data
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="replace")
+                cal = Calendar.from_ical(raw)
+            except Exception:
+                continue
+
+            for comp in cal.walk():
+                if comp.name != "VEVENT":
+                    continue
+                summ, uid = _vevent_summary_uid(comp)
+                st = _vevent_start_for_sort(comp)
+                if st is None:
+                    continue
+                if st < win_start or st >= win_end_excl:
+                    continue
+                dedupe = uid or url
+                if dedupe and dedupe in seen_uid:
+                    continue
+                if dedupe:
+                    seen_uid.add(dedupe)
+
+                if hasattr(st, "hour") and (st.hour, st.minute) != (0, 0):
+                    start_iso = st.strftime("%Y-%m-%d %H:%M")
+                else:
+                    start_iso = st.strftime("%Y-%m-%d")
+
+                resultado.append(
+                    {
+                        "summary": summ or "(sin titulo)",
+                        "start_iso": start_iso,
+                        "sort_key": st,
+                        "uid": uid,
+                        "url": url,
+                    }
+                )
+
+    resultado.sort(key=lambda x: x["sort_key"])
+    return resultado
+
+
+def borrar_evento_por_url(resource_url: str) -> bool:
+    """Elimina un evento CalDAV por URL del recurso (.ics)."""
+    _set_last_evento_error("")
+    if not resource_url or not resource_url.strip():
+        _set_last_evento_error("URL de evento vacia")
+        return False
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        _set_last_evento_error("Configuracion CalDAV incompleta")
+        return False
+    if not caldav:
+        _set_last_evento_error("Dependencia caldav no disponible")
+        return False
+
+    u = resource_url.strip()
+    try:
+        client = caldav.DAVClient(
+            config.CALDAV_URL,
+            username=config.CALDAV_USER,
+            password=config.CALDAV_PASS,
+        )
+        ev_obj = caldav.Event(client, url=u)
+        ev_obj.delete()
+        return True
+    except Exception as exc:
+        _set_last_evento_error(str(exc)[:300])
+        return False

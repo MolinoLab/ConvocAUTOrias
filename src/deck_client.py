@@ -143,3 +143,134 @@ def crear_tarea_deck(
     except Exception as exc:
         _set_last_error(f"Error creando card Deck: {str(exc)[:180]}")
         return False
+
+
+def _obtener_board_id_y_stacks(
+    board_name: str | None,
+) -> tuple[int, list] | None:
+    """Devuelve (board_id, stacks_json) o None si falla."""
+    board_target = (board_name or config.DECK_BOARD_NAME or "MolinoLab").strip()
+    base = _base_api()
+    try:
+        rb = requests.get(f"{base}/boards", headers=_headers(), auth=_auth(), timeout=20)
+        if rb.status_code != 200:
+            _set_last_error(f"Deck boards devolvio {rb.status_code}")
+            return None
+        boards = rb.json() if rb.text else []
+    except Exception as exc:
+        _set_last_error(f"Error consultando boards Deck: {str(exc)[:180]}")
+        return None
+
+    board = None
+    for b in boards if isinstance(boards, list) else []:
+        if _norm(str(b.get("title", ""))) == _norm(board_target):
+            board = b
+            break
+    if not board:
+        _set_last_error(f"No se encontro board Deck '{board_target}'")
+        return None
+
+    board_id = board.get("id")
+    try:
+        rs = requests.get(
+            f"{base}/boards/{board_id}/stacks",
+            headers=_headers(),
+            auth=_auth(),
+            timeout=20,
+        )
+        if rs.status_code != 200:
+            _set_last_error(f"Deck stacks devolvio {rs.status_code}")
+            return None
+        stacks = rs.json() if rs.text else []
+    except Exception as exc:
+        _set_last_error(f"Error consultando stacks Deck: {str(exc)[:180]}")
+        return None
+
+    return int(board_id), stacks if isinstance(stacks, list) else []
+
+
+def _duedate_a_fecha_iso(duedate: object) -> str:
+    """Convierte duedate API (string ISO o None) a YYYY-MM-DD o cadena vacía."""
+    if duedate is None:
+        return ""
+    s = str(duedate).strip()
+    if not s:
+        return ""
+    if "T" in s:
+        return s.split("T", 1)[0]
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return s[:10]
+    return s[:10] if len(s) >= 10 else s
+
+
+def listar_tareas_deck(board_name: str | None = None) -> list[dict]:
+    """
+    Lista tarjetas no archivadas del tablero configurado (todas las columnas).
+    Cada dict: title, due (YYYY-MM-DD o ""), board_id, stack_id, card_id, stack_title.
+    """
+    _set_last_error("")
+    if not requests or not HTTPBasicAuth:
+        _set_last_error("requests no disponible para Deck API")
+        return []
+
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        _set_last_error("Configuracion Nextcloud incompleta para Deck API")
+        return []
+
+    got = _obtener_board_id_y_stacks(board_name)
+    if not got:
+        return []
+    board_id, stacks = got
+    base = _base_api()
+    resultado: list[dict] = []
+
+    for stack in stacks:
+        stack_id = stack.get("id")
+        stack_title = str(stack.get("title") or "")
+        cards = stack.get("cards") if isinstance(stack.get("cards"), list) else []
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            if card.get("archived"):
+                continue
+            cid = card.get("id")
+            if cid is None:
+                continue
+            resultado.append(
+                {
+                    "title": str(card.get("title") or ""),
+                    "due": _duedate_a_fecha_iso(card.get("duedate")),
+                    "board_id": board_id,
+                    "stack_id": int(stack_id) if stack_id is not None else 0,
+                    "card_id": int(cid),
+                    "stack_title": stack_title,
+                }
+            )
+    return resultado
+
+
+def borrar_tarjeta_deck(board_id: int, stack_id: int, card_id: int) -> bool:
+    """Elimina una tarjeta Deck por ids."""
+    _set_last_error("")
+    if not requests or not HTTPBasicAuth:
+        _set_last_error("requests no disponible para Deck API")
+        return False
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        _set_last_error("Configuracion Nextcloud incompleta para Deck API")
+        return False
+
+    base = _base_api()
+    try:
+        r = requests.delete(
+            f"{base}/boards/{board_id}/stacks/{stack_id}/cards/{card_id}",
+            headers=_headers(),
+            auth=_auth(),
+            timeout=20,
+        )
+        if r.status_code in (200, 204):
+            return True
+        _set_last_error(f"Borrar card Deck devolvio {r.status_code}: {(r.text or '')[:120]}")
+        return False
+    except Exception as exc:
+        _set_last_error(f"Error borrando card Deck: {str(exc)[:180]}")
+        return False

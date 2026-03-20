@@ -1,9 +1,10 @@
 """
 Bot Telegram que recibe URLs y comandos.
 Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
-          /func <texto> [prioridad] [estado], /listfunc,
+          /func <texto> [prioridad] [estado], /listfunc, /listfuncionalidades,
           /tarea, /comprar, /huevos, /listhuevos,
-          /evento <nombre> <fecha> [hora], /listtareas, /ayuda.
+          /evento <nombre> <fecha> [hora], /listevento [+ | ++], /listtareas,
+          /rmfunc, /rmtarea, /rmevento <numero> (tras el listado correspondiente), /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -30,9 +31,20 @@ from src.db_funcionalidad import (
     ESTADOS_VALIDOS,
     añadir as añadir_func,
     listar as listar_func,
+    eliminar as eliminar_func_db,
 )
-from src.caldav_client import crear_evento, listar_tareas, obtener_ultimo_error_evento
-from src.deck_client import crear_tarea_deck, obtener_ultimo_error_deck
+from src.caldav_client import (
+    borrar_evento_por_url,
+    crear_evento,
+    listar_eventos_proximos_dias,
+    obtener_ultimo_error_evento,
+)
+from src.deck_client import (
+    borrar_tarjeta_deck,
+    crear_tarea_deck,
+    listar_tareas_deck,
+    obtener_ultimo_error_deck,
+)
 from src.db_huevos import añadir as añadir_huevo, resumen_ultimos_dias_desde_hoy
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
@@ -47,6 +59,25 @@ _WHISPER_MODEL = None
 
 # Stack Deck para lista de compras (nombre exacto en Nextcloud Deck)
 DECK_STACK_COMPRAR = "Comprar"
+
+# context.chat_data: caché del último listado para /rm* (mismo chat)
+CACHE_RM_FUNC_IDS = "rm_func_ids"
+CACHE_RM_TAREAS_DECK = "rm_tareas_deck"
+CACHE_RM_EVENTOS = "rm_evento_urls"
+
+# Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
+FUNC_RESUMEN_MAX = 80
+
+
+def _dias_ventana_eventos(args: list[str]) -> int:
+    """7 días por defecto; + -> 14; ++ -> 21."""
+    if not args:
+        return 7
+    if any((a or "").strip() == "++" for a in args):
+        return 21
+    if any((a or "").strip() == "+" for a in args):
+        return 14
+    return 7
 
 
 def _esta_autorizado(update: Update) -> bool:
@@ -235,14 +266,18 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/sube <url> - Sube una convocatoria por URL\n"
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
         "/func <texto> [prioridad 1-5] [estado] - Funcionalidad (prioridad 3 por defecto)\n"
-        "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
+        "/listfunc o /listfuncionalidades - Lista funcionalidades ordenadas por prioridad\n"
+        "/rmfunc <numero> - Borra la funcionalidad N del ultimo listado\n"
         '/tarea "Titulo" [fecha] ["Descripcion"] - Tarjeta en Nextcloud Deck (columna por defecto)\n'
         f'/comprar "Titulo" [fecha] ["Descripcion"] - Igual que /tarea en columna "{DECK_STACK_COMPRAR}"\n'
         "/huevos <cantidad> - Registra huevos del dia en data/huevos.csv\n"
         "/listhuevos [dias] - Resumen por dia (6 dias por defecto, desde hoy hacia atras)\n"
         "/evento <nombre> <fecha> [HH:MM] - Evento en CalDAV "
         "(fecha española: DD-MM-AAAA, DD-MM, DD; hora opcional, 1 h duracion)\n"
-        "/listtareas - Lista tareas del calendario CalDAV por prioridad\n"
+        "/listevento - Proximos 7 dias; /listevento + -> 14 dias; /listevento ++ -> 21 dias\n"
+        "/rmevento <numero> - Borra el evento N del ultimo /listevento\n"
+        "/listtareas - Lista tarjetas pendientes en Nextcloud Deck (fecha mas proxima primero)\n"
+        "/rmtarea <numero> - Borra la tarea N del ultimo /listtareas\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
@@ -523,11 +558,18 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     todas.sort(key=lambda f: (-f.prioridad, f.estado != "pendiente"))
 
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_FUNC_IDS] = [f.id for f in todas]
+
     lineas: list[str] = []
     for i, f in enumerate(todas, 1):
         emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
         estado_tag = f"[{f.estado}]"
-        txt = (f.texto[:60] + "...") if len(f.texto) > 60 else f.texto
+        txt = (
+            (f.texto[:FUNC_RESUMEN_MAX] + "...")
+            if len(f.texto) > FUNC_RESUMEN_MAX
+            else f.texto
+        )
         lineas.append(f"{i}. {emoji} P{f.prioridad} {estado_tag} {txt}")
 
     cabecera = f"Funcionalidades ({len(todas)}):\n\n"
@@ -857,37 +899,32 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
-_TAREA_PRI_EMOJI = {1: "\U0001f534", 2: "\U0001f534", 3: "\U0001f7e0", 4: "\U0001f7e0",
-                    5: "\U0001f7e1", 6: "\U0001f7e2", 7: "\U0001f535", 8: "\U0001f535", 9: "\u26aa"}
-
-
-async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_listevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
 
-    msg = await update.message.reply_text("Consultando tareas...")
+    dias = _dias_ventana_eventos(list(context.args or []))
+    msg = await update.message.reply_text("Consultando eventos en CalDAV...")
 
-    try:
-        tareas = listar_tareas()
-    except Exception as exc:
-        await msg.edit_text(f"Error al consultar tareas: {exc}")
+    eventos = listar_eventos_proximos_dias(dias)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_EVENTOS] = [str(e.get("url") or "") for e in eventos]
+
+    if not eventos:
+        err = obtener_ultimo_error_evento()
+        extra = f"\n\nDetalle: {err}" if err else ""
+        await msg.edit_text(
+            f"No hay eventos en los proximos {dias} dias (desde hoy).{extra}"
+        )
         return
-
-    if not tareas:
-        await msg.edit_text("No hay tareas pendientes.")
-        return
-
-    tareas.sort(key=lambda t: (t["priority"] == 0, t["priority"], t["due"] or "9999-99-99"))
 
     lineas: list[str] = []
-    for i, t in enumerate(tareas, 1):
-        emoji = _TAREA_PRI_EMOJI.get(t["priority"], "\u2b1c")
-        fecha = f" [{t['due']}]" if t["due"] else ""
-        titulo = (t["summary"][:60] + "...") if len(t["summary"]) > 60 else t["summary"]
-        lineas.append(f"{i}. {emoji}{fecha} {titulo}")
+    for i, ev in enumerate(eventos, 1):
+        tit = ev["summary"][:70] + "..." if len(ev["summary"]) > 70 else ev["summary"]
+        lineas.append(f"{i}. [{ev['start_iso']}] {tit}")
 
-    cabecera = f"Tareas ({len(tareas)}):\n\n"
+    cabecera = f"Eventos proximos {dias} dias ({len(eventos)}):\n\n"
     texto_completo = cabecera + "\n".join(lineas)
 
     MAX_MSG = 4000
@@ -896,6 +933,175 @@ async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await msg.edit_text(texto_completo[:MAX_MSG])
         await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /rmevento <numero>\n"
+            "El numero es el de la ultima lista de /listevento en este chat."
+        )
+        return
+    try:
+        n = int(context.args[0].strip())
+    except ValueError:
+        await update.message.reply_text("El numero debe ser un entero (ej. 1).")
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_EVENTOS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text(
+            "Indice invalido o lista antigua. Ejecuta /listevento primero en este chat."
+        )
+        return
+
+    url = (cache[n - 1] or "").strip()
+    if not url:
+        await update.message.reply_text(
+            "No hay URL CalDAV para ese evento; no se puede borrar desde el bot."
+        )
+        return
+
+    ok = borrar_evento_por_url(url)
+    if ok:
+        if context.chat_data is not None:
+            context.chat_data.pop(CACHE_RM_EVENTOS, None)
+        await update.message.reply_text(f"Evento {n} eliminado del calendario.")
+    else:
+        err = obtener_ultimo_error_evento()
+        await update.message.reply_text(
+            "No se pudo borrar el evento.\n" + (err or "sin detalle")
+        )
+
+
+async def cmd_rmfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /rmfunc <numero>\n"
+            "El numero es el de /listfunc o /listfuncionalidades en este chat."
+        )
+        return
+    try:
+        n = int(context.args[0].strip())
+    except ValueError:
+        await update.message.reply_text("El numero debe ser un entero (ej. 1).")
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_FUNC_IDS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text(
+            "Indice invalido o lista antigua. Ejecuta /listfunc primero en este chat."
+        )
+        return
+
+    fid = cache[n - 1]
+    if eliminar_func_db(fid):
+        if context.chat_data is not None:
+            context.chat_data.pop(CACHE_RM_FUNC_IDS, None)
+        await update.message.reply_text(f"Funcionalidad {n} eliminada (id {fid}).")
+    else:
+        await update.message.reply_text(
+            "No se pudo eliminar (id no encontrado o error de almacenamiento)."
+        )
+
+
+async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    msg = await update.message.reply_text("Consultando tareas en Deck...")
+
+    tareas = listar_tareas_deck()
+
+    if not tareas:
+        err = obtener_ultimo_error_deck()
+        extra = f"\n\nDetalle: {err}" if err else ""
+        await msg.edit_text(f"No hay tarjetas pendientes en Deck.{extra}")
+        return
+
+    tareas.sort(
+        key=lambda t: (
+            not t["due"],
+            t["due"] or "9999-99-99",
+            (t.get("stack_title") or "").lower(),
+            (t.get("title") or "").lower(),
+        )
+    )
+
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_TAREAS_DECK] = [
+            {
+                "board_id": t["board_id"],
+                "stack_id": t["stack_id"],
+                "card_id": t["card_id"],
+            }
+            for t in tareas
+        ]
+
+    lineas: list[str] = []
+    for i, t in enumerate(tareas, 1):
+        fecha = f" [{t['due']}]" if t["due"] else ""
+        col = f" ({t['stack_title']})" if t.get("stack_title") else ""
+        titulo = t.get("title") or "(sin titulo)"
+        titulo = (titulo[:60] + "...") if len(titulo) > 60 else titulo
+        lineas.append(f"{i}.{col}{fecha} {titulo}")
+
+    cabecera = f"Tareas Deck ({len(tareas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await msg.edit_text(texto_completo)
+    else:
+        await msg.edit_text(texto_completo[:MAX_MSG])
+        await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+async def cmd_rmtarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /rmtarea <numero>\n"
+            "El numero es el de la ultima lista de /listtareas en este chat."
+        )
+        return
+    try:
+        n = int(context.args[0].strip())
+    except ValueError:
+        await update.message.reply_text("El numero debe ser un entero (ej. 1).")
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_TAREAS_DECK) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text(
+            "Indice invalido o lista antigua. Ejecuta /listtareas primero en este chat."
+        )
+        return
+
+    item = cache[n - 1]
+    ok = borrar_tarjeta_deck(
+        int(item["board_id"]),
+        int(item["stack_id"]),
+        int(item["card_id"]),
+    )
+    if ok:
+        if context.chat_data is not None:
+            context.chat_data.pop(CACHE_RM_TAREAS_DECK, None)
+        await update.message.reply_text(f"Tarea {n} eliminada de Deck.")
+    else:
+        err = obtener_ultimo_error_deck()
+        await update.message.reply_text(
+            "No se pudo borrar la tarjeta.\n" + (err or "sin detalle")
+        )
 
 
 async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1275,10 +1481,15 @@ def main() -> None:
     app.add_handler(CommandHandler("ver", cmd_ver))
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
+    app.add_handler(CommandHandler("listfuncionalidades", cmd_listfunc))
+    app.add_handler(CommandHandler("rmfunc", cmd_rmfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
     app.add_handler(CommandHandler("comprar", cmd_comprar))
     app.add_handler(CommandHandler("evento", cmd_evento))
+    app.add_handler(CommandHandler("listevento", cmd_listevento))
+    app.add_handler(CommandHandler("rmevento", cmd_rmevento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))
+    app.add_handler(CommandHandler("rmtarea", cmd_rmtarea))
     app.add_handler(CommandHandler("huevos", cmd_huevos))
     app.add_handler(CommandHandler("listhuevos", cmd_listhuevos))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
