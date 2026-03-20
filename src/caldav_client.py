@@ -542,15 +542,12 @@ def _vevent_summary_uid(comp) -> tuple[str, str]:
     return summ, uid
 
 
-def listar_eventos_proximos_dias(dias: int) -> list[dict]:
+def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> list[dict]:
     """
-    Eventos VEVENT con inicio en la ventana [hoy 00:00 local, hoy + dias) (dias = 7 -> 7 días desde hoy).
-    Consulta todos los calendarios objetivo que declaran VEVENT (orden _sort_calendars_for_events).
-    Cada dict: summary, start_iso (YYYY-MM-DD o YYYY-MM-DD HH:MM), sort_key (datetime), uid, url
+    VEVENT con inicio en [win_start, win_end_excl). Misma forma de dict que listar_eventos_proximos_dias.
+    win_start / win_end_excl: datetime naive (fecha-hora local del entorno).
     """
     _set_last_evento_error("")
-    if dias < 1:
-        dias = 1
     if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
         _set_last_evento_error("Configuracion CalDAV incompleta")
         return []
@@ -572,10 +569,6 @@ def listar_eventos_proximos_dias(dias: int) -> list[dict]:
     if not calendars:
         _set_last_evento_error("No se encontro calendario objetivo en CalDAV")
         return []
-
-    today_d = datetime.now().date()
-    win_start = datetime.combine(today_d, time.min)
-    win_end_excl = win_start + timedelta(days=int(dias))
 
     ordered = _sort_calendars_for_events(calendars)
     seen_uid: set[str] = set()
@@ -638,6 +631,98 @@ def listar_eventos_proximos_dias(dias: int) -> list[dict]:
 
     resultado.sort(key=lambda x: x["sort_key"])
     return resultado
+
+
+def listar_eventos_proximos_dias(dias: int) -> list[dict]:
+    """
+    Eventos VEVENT con inicio en la ventana [hoy 00:00 local, hoy + dias) (dias = 7 -> 7 días desde hoy).
+    Consulta todos los calendarios objetivo que declaran VEVENT (orden _sort_calendars_for_events).
+    Cada dict: summary, start_iso (YYYY-MM-DD o YYYY-MM-DD HH:MM), sort_key (datetime), uid, url
+    """
+    if dias < 1:
+        dias = 1
+    today_d = datetime.now().date()
+    win_start = datetime.combine(today_d, time.min)
+    win_end_excl = win_start + timedelta(days=int(dias))
+    return listar_eventos_en_ventana(win_start, win_end_excl)
+
+
+def _vevent_dtend_or_duration(comp) -> str:
+    de = comp.get("dtend")
+    if de:
+        dt = de.dt if hasattr(de, "dt") else de
+        if hasattr(dt, "hour"):
+            return dt.strftime("%Y-%m-%d %H:%M") if (dt.hour, dt.minute) != (0, 0) else dt.strftime("%Y-%m-%d")
+        if hasattr(dt, "year"):
+            return dt.strftime("%Y-%m-%d")
+    dur = comp.get("duration")
+    if dur:
+        try:
+            return f"duracion: {dur.dt}"
+        except Exception:
+            return f"duracion: {dur}"
+    return ""
+
+
+def formatear_detalle_evento_por_url(resource_url: str) -> str:
+    """
+    Lee el .ics del evento por URL y devuelve texto con todos los campos principales del VEVENT.
+    """
+    _set_last_evento_error("")
+    u = (resource_url or "").strip()
+    if not u:
+        _set_last_evento_error("URL de evento vacia")
+        return ""
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        _set_last_evento_error("Configuracion CalDAV incompleta")
+        return ""
+    if not caldav or not Calendar:
+        _set_last_evento_error("Dependencia caldav/icalendar no disponible")
+        return ""
+
+    try:
+        client = caldav.DAVClient(
+            config.CALDAV_URL,
+            username=config.CALDAV_USER,
+            password=config.CALDAV_PASS,
+        )
+        ev_obj = caldav.Event(client, url=u)
+        raw = ev_obj.data
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        cal = Calendar.from_ical(raw)
+    except Exception as exc:
+        _set_last_evento_error(str(exc)[:300])
+        return ""
+
+    for comp in cal.walk():
+        if comp.name != "VEVENT":
+            continue
+        summ, _ = _vevent_summary_uid(comp)
+        st = _vevent_start_for_sort(comp)
+        start_s = ""
+        if st:
+            if hasattr(st, "hour") and (st.hour, st.minute) != (0, 0):
+                start_s = st.strftime("%Y-%m-%d %H:%M")
+            else:
+                start_s = st.strftime("%Y-%m-%d")
+        end_s = _vevent_dtend_or_duration(comp)
+        desc = str(comp.get("description") or "").strip()
+        loc = str(comp.get("location") or "").strip()
+        partes = [
+            f"Titulo: {summ or '(sin titulo)'}",
+            f"Inicio: {start_s or '(desconocido)'}",
+        ]
+        if end_s:
+            partes.append(f"Fin / {end_s}")
+        if loc:
+            partes.append(f"Ubicacion: {loc}")
+        if desc:
+            partes.append(f"Descripcion:\n{desc}")
+        return "\n\n".join(partes)
+
+    _set_last_evento_error("No se encontro VEVENT en el recurso")
+    return ""
 
 
 def borrar_evento_por_url(resource_url: str) -> bool:

@@ -110,5 +110,21 @@ def buscar_por_ruta(ruta_buscar: str) -> Idea | None:
     return None
 
 
+def eliminar_por_id(id_buscar: str) -> Idea | None:
+    """Quita la idea del CSV. Retorna la Idea eliminada o None si no existía."""
+    ideas = leer_ideas()
+    removed: Idea | None = None
+    rest: list[Idea] = []
+    for idea in ideas:
+        if idea.id == id_buscar:
+            removed = idea
+        else:
+            rest.append(idea)
+    if removed is None:
+        return None
+    escribir_ideas(rest)
+    return removed
+
+
 def listar_rutas_indexadas() -> set[str]:
     return {idea.ruta for idea in leer_ideas() if idea.ruta}

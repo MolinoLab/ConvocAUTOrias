@@ -111,6 +111,21 @@ def actualizar_csv(conv: Convocatoria) -> bool:
     return False
 
 
+def eliminar_por_id_csv(id_buscar: str) -> Convocatoria | None:
+    convocatorias = leer_csv()
+    removed: Convocatoria | None = None
+    rest: list[Convocatoria] = []
+    for c in convocatorias:
+        if c.id == id_buscar:
+            removed = c
+        else:
+            rest.append(c)
+    if removed is None:
+        return None
+    escribir_csv(rest)
+    return removed
+
+
 # --- SQLite ---
 
 def _crear_tabla(conn: sqlite3.Connection) -> None:
@@ -188,6 +203,21 @@ def actualizar_sqlite(conv: Convocatoria) -> bool:
         conn.close()
 
 
+def eliminar_por_id_sqlite(id_buscar: str) -> Convocatoria | None:
+    conv = buscar_por_id_sqlite(id_buscar)
+    if not conv:
+        return None
+    conn = _conexion_sqlite()
+    try:
+        cur = conn.execute("DELETE FROM convocatorias WHERE id = ?", (id_buscar,))
+        conn.commit()
+        if cur.rowcount > 0:
+            return conv
+        return None
+    finally:
+        conn.close()
+
+
 # --- API unificada (usa CSV por defecto) ---
 
 def usar_sqlite() -> bool:
@@ -220,3 +250,10 @@ def actualizar(conv: Convocatoria) -> bool:
     if usar_sqlite():
         return actualizar_sqlite(conv)
     return actualizar_csv(conv)
+
+
+def eliminar_por_id(id_buscar: str) -> Convocatoria | None:
+    """Elimina por ID. Retorna la convocatoria eliminada o None."""
+    if usar_sqlite():
+        return eliminar_por_id_sqlite(id_buscar)
+    return eliminar_por_id_csv(id_buscar)

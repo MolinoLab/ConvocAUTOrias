@@ -249,6 +249,74 @@ def listar_tareas_deck(board_name: str | None = None) -> list[dict]:
     return resultado
 
 
+def obtener_tarjeta_deck(board_id: int, stack_id: int, card_id: int) -> dict | None:
+    """
+    GET tarjeta individual. Devuelve dict con title, description, duedate (ISO o ""),
+    stack_title (si se puede resolver), labels (lista de titulos o []), board_id, stack_id, card_id.
+    """
+    _set_last_error("")
+    if not requests or not HTTPBasicAuth:
+        _set_last_error("requests no disponible para Deck API")
+        return None
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        _set_last_error("Configuracion Nextcloud incompleta para Deck API")
+        return None
+
+    base = _base_api()
+    try:
+        r = requests.get(
+            f"{base}/boards/{board_id}/stacks/{stack_id}/cards/{card_id}",
+            headers=_headers(),
+            auth=_auth(),
+            timeout=20,
+        )
+        if r.status_code != 200:
+            _set_last_error(f"GET card Deck devolvio {r.status_code}")
+            return None
+        card = r.json() if r.text else None
+    except Exception as exc:
+        _set_last_error(f"Error leyendo card Deck: {str(exc)[:180]}")
+        return None
+
+    if not isinstance(card, dict):
+        return None
+
+    stack_title = ""
+    got = _obtener_board_id_y_stacks(None)
+    if got:
+        _, stacks = got
+        for s in stacks:
+            if int(s.get("id") or 0) == int(stack_id):
+                stack_title = str(s.get("title") or "")
+                break
+
+    labels_raw = card.get("labels") or card.get("labelsAssigned") or []
+    labels: list[str] = []
+    if isinstance(labels_raw, list):
+        for lb in labels_raw:
+            if isinstance(lb, dict):
+                t = lb.get("title") or lb.get("label") or lb.get("name")
+                if t:
+                    labels.append(str(t))
+            elif isinstance(lb, str):
+                labels.append(lb)
+
+    dd = card.get("duedate")
+    due_s = str(dd).strip() if dd is not None and str(dd).strip() else ""
+
+    return {
+        "title": str(card.get("title") or ""),
+        "description": str(card.get("description") or ""),
+        "duedate": due_s,
+        "due_date_only": _duedate_a_fecha_iso(dd) if dd else "",
+        "stack_title": stack_title,
+        "labels": labels,
+        "board_id": board_id,
+        "stack_id": stack_id,
+        "card_id": card_id,
+    }
+
+
 def borrar_tarjeta_deck(board_id: int, stack_id: int, card_id: int) -> bool:
     """Elimina una tarjeta Deck por ids."""
     _set_last_error("")

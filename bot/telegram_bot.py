@@ -1,11 +1,7 @@
 """
-Bot Telegram que recibe URLs y comandos.
-Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
-          /func <texto> [prioridad] [estado], /listfunc, /listfuncionalidades,
-          /tarea, /comprar, /huevos, /listhuevos,
-          /evento <nombre> <fecha> [hora], /listevento [+ | ++], /listtareas,
-          /rmfunc, /rmtarea, /rmevento <numero> (tras el listado correspondiente), /ayuda.
-URL enviada sin comando se interpreta como nueva convocatoria.
+Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
+ideas, enlaces, funcionalidades, tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
+URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import hashlib
 import json
@@ -24,18 +20,34 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from telegram.error import Conflict
 
 import config
-from src.db import Convocatoria, añadir, buscar_por_id, listar, actualizar
-from src.db_ideas import Idea, añadir_idea
+from src.db import Convocatoria, añadir, buscar_por_id, eliminar_por_id, listar
+from src.db_ideas import (
+    Idea,
+    añadir_idea,
+    buscar_por_id as buscar_idea_por_id,
+    eliminar_por_id as eliminar_idea_por_id,
+    leer_ideas,
+)
 from src.db_funcionalidad import (
     Funcionalidad,
     ESTADOS_VALIDOS,
     añadir as añadir_func,
+    buscar_por_id as buscar_func_por_id,
     listar as listar_func,
     eliminar as eliminar_func_db,
+)
+from src.db_enlaces import (
+    Enlace,
+    añadir_enlace,
+    buscar_enlace_por_id,
+    buscar_enlace_por_url,
+    eliminar_enlace_por_id,
+    leer_enlaces,
 )
 from src.caldav_client import (
     borrar_evento_por_url,
     crear_evento,
+    formatear_detalle_evento_por_url,
     listar_eventos_proximos_dias,
     obtener_ultimo_error_evento,
 )
@@ -43,6 +55,7 @@ from src.deck_client import (
     borrar_tarjeta_deck,
     crear_tarea_deck,
     listar_tareas_deck,
+    obtener_tarjeta_deck,
     obtener_ultimo_error_deck,
 )
 from src.db_huevos import añadir as añadir_huevo, resumen_ultimos_dias_desde_hoy
@@ -64,9 +77,41 @@ DECK_STACK_COMPRAR = "Comprar"
 CACHE_RM_FUNC_IDS = "rm_func_ids"
 CACHE_RM_TAREAS_DECK = "rm_tareas_deck"
 CACHE_RM_EVENTOS = "rm_evento_urls"
+CACHE_RM_IDEAS = "rm_idea_ids"
+CACHE_RM_CONVOS = "rm_conv_ids"
+CACHE_RM_ENLACES = "rm_enlace_ids"
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
+IDEA_RESUMEN_LISTA_MAX = 70
+ENLACE_RESUMEN_LISTA_MAX = 72
+MAX_TELEGRAM_MSG = 4000
+
+
+def _parsear_tokens_rm(args: list[str]) -> tuple[list[int], list[str]]:
+    """Separa argumentos en enteros (indices de listado) y otros tokens."""
+    enteros: list[int] = []
+    otros: list[str] = []
+    for a in args:
+        s = (a or "").strip()
+        if not s:
+            continue
+        if s.isdigit():
+            enteros.append(int(s))
+        else:
+            otros.append(s)
+    return enteros, otros
+
+
+async def _reply_texto_largo(update: Update, texto: str) -> None:
+    """Envía texto partido en trozos <= MAX_TELEGRAM_MSG."""
+    if len(texto) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto)
+        return
+    i = 0
+    while i < len(texto):
+        await update.message.reply_text(texto[i : i + MAX_TELEGRAM_MSG])
+        i += MAX_TELEGRAM_MSG
 
 
 def _dias_ventana_eventos(args: list[str]) -> int:
@@ -261,46 +306,60 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
-    await update.message.reply_text(
-        "Comandos disponibles:\n"
-        "/sube <url> - Sube una convocatoria por URL\n"
-        "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
-        "/func <texto> [prioridad 1-5] [estado] - Funcionalidad (prioridad 3 por defecto)\n"
-        "/listfunc o /listfuncionalidades - Lista funcionalidades ordenadas por prioridad\n"
-        "/rmfunc <numero> - Borra la funcionalidad N del ultimo listado\n"
-        '/tarea "Titulo" [fecha] ["Descripcion"] - Tarjeta en Nextcloud Deck (columna por defecto)\n'
-        f'/comprar "Titulo" [fecha] ["Descripcion"] - Igual que /tarea en columna "{DECK_STACK_COMPRAR}"\n'
-        "/huevos <cantidad> - Registra huevos del dia en data/huevos.csv\n"
-        "/listhuevos [dias] - Resumen por dia (6 dias por defecto, desde hoy hacia atras)\n"
-        "/evento <nombre> <fecha> [HH:MM] - Evento en CalDAV "
-        "(fecha española: DD-MM-AAAA, DD-MM, DD; hora opcional, 1 h duracion)\n"
-        "/listevento - Proximos 7 dias; /listevento + -> 14 dias; /listevento ++ -> 21 dias\n"
-        "/rmevento <numero> - Borra el evento N del ultimo /listevento\n"
-        "/listtareas - Lista tarjetas pendientes en Nextcloud Deck (fecha mas proxima primero)\n"
-        "/rmtarea <numero> - Borra la tarea N del ultimo /listtareas\n"
-        "/listar o /list - Lista convocatorias futuras por proximidad\n"
-        "/ver <id o numero> - Ver toda la info de una convocatoria\n"
-        "/revisar <id> - Marca una convocatoria como procesada\n"
-        "/ayuda - Muestra esta ayuda\n\n"
-        "Fechas (tarea/evento): formato español DD-MM-AAAA; DD-MM = año actual; "
-        "solo DD = mes y año actuales. Tambien se acepta YYYY-MM-DD en tareas.\n\n"
-        "Tambien puedes enviar una URL directamente para subirla.\n\n"
-        "Audio: la primera palabra determina la accion:\n"
-        "  idea <descripcion> - Guarda una idea\n"
-        "  funcionalidad <descripcion> [prioridad 1-5] - Registra funcionalidad\n"
-        "  tarea <titulo> [fecha] - Crea tarjeta en Deck\n"
-        f'  comprar <titulo> [fecha] - Tarjeta en columna "{DECK_STACK_COMPRAR}"\n'
-        "  evento <nombre> <fecha> [HH:MM] - Crea evento en calendario\n"
-        "  Si no se reconoce accion, se guarda como idea."
+
+    texto = (
+        "Comandos por tema (orden sugerido: crear → listar → ver → borrar):\n\n"
+        "[Convocatorias]\n"
+        "/convo <url> — Añade convocatoria por URL\n"
+        "/listconvo — Lista futuras por proximidad\n"
+        "/verconvo <numero> — Detalle (numero del ultimo /listconvo en este chat)\n"
+        "/rmconvo <num ...> — Elimina una o varias por numero del listado\n\n"
+        "[Enlaces sin categorizar]\n"
+        "/url <https://...> [notas] — Guardar en enlaces.csv (tags/categorias en el CSV)\n"
+        "URL suelta (sin comando) — Se guarda igual que /url\n"
+        "/listurl — Listar enlaces\n"
+        "/verurl <numero>\n"
+        "/rmurl <num ...>\n\n"
+        "[Ideas]\n"
+        "/idea <texto> — Guardar\n"
+        "/listideas — Listar (recientes primero)\n"
+        "/veridea <numero>\n"
+        "/rmidea <num ...>\n\n"
+        "[Funcionalidades]\n"
+        "/func <texto> [prioridad 1-5] — Registrar (prioridad por defecto 3)\n"
+        "/listfunc o /listfuncionalidades — Listar por prioridad\n"
+        "/verfunc <numero>\n"
+        "/rmfunc <num ...>\n\n"
+        "[Tareas Deck]\n"
+        '/tarea "Titulo" [fecha] ["Desc"] — Tarjeta (columna por defecto)\n'
+        f'/comprar "Titulo" [fecha] ["Desc"] — Columna "{DECK_STACK_COMPRAR}"\n'
+        "/listtareas — Listar por fecha\n"
+        "/vertarea <numero> — Detalle de la tarjeta\n"
+        "/rmtarea <num ...>\n\n"
+        "[Eventos CalDAV]\n"
+        "/evento <nombre> <fecha> [HH:MM] — Crear (1 h si hay hora)\n"
+        "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
+        "/verevento <numero>\n"
+        "/rmevento <num ...>\n\n"
+        "[Huevos]\n"
+        "/huevos <cantidad> — Registro del dia\n"
+        "/listhuevos [dias] — Resumen hacia atras (6 por defecto)\n\n"
+        "[Audio]\n"
+        "Primera palabra: idea, funcionalidad, tarea, comprar, evento. "
+        "Si no coincide, se guarda como idea.\n\n"
+        "Fechas (tarea/evento): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual. "
+        "En tareas tambien YYYY-MM-DD.\n\n"
+        "/ayuda — Esta lista"
     )
+    await _reply_texto_largo(update, texto)
 
 
-async def cmd_añadir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_convo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
     if not context.args:
-        await update.message.reply_text("Uso: /sube <url>")
+        await update.message.reply_text("Uso: /convo <url>")
         return
     url = " ".join(context.args).strip()
     if not _es_url(url):
@@ -342,12 +401,15 @@ async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             await update.message.reply_text("No hay convocatorias pendientes.")
         return
 
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_CONVOS] = [c.id for c in futuras]
+
     cabecera = f"Hay {len(futuras)} convocatoria(s) futura(s):\n\n"
     lineas: list[str] = []
     for i, c in enumerate(futuras, 1):
         titulo = (c.titulo[:55] + "...") if len(c.titulo) > 55 else c.titulo
         plazo = _formato_plazo(c.plazo_fin)
-        lineas.append(f"{i}. [{plazo}] {titulo}\n   /ver {c.id}")
+        lineas.append(f"{i}. [{plazo}] {titulo}")
 
     texto_completo = cabecera + "\n\n".join(lineas)
 
@@ -369,13 +431,13 @@ async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                 await update.message.reply_text(parte.strip())
 
 
-def _formatear_convocatoria(conv: Convocatoria) -> str:
+def _formatear_convocatoria(conv: Convocatoria, *, recortar_descripcion: bool = False) -> str:
     """Formatea todos los campos de una convocatoria para mostrar al usuario."""
     plazo = conv.plazo_fin.strip() if conv.plazo_fin.strip() else "No disponible"
     requisitos = conv.requisitos.strip() if conv.requisitos.strip() else "No especificados"
 
     descripcion = conv.descripcion.strip()
-    if len(descripcion) > 1500:
+    if recortar_descripcion and len(descripcion) > 1500:
         descripcion = descripcion[:1500] + "... (recortado)"
     if not descripcion:
         descripcion = "No disponible"
@@ -386,16 +448,25 @@ def _formatear_convocatoria(conv: Convocatoria) -> str:
         f"Plazo: {plazo}\n\n"
         f"Requisitos: {requisitos}\n\n"
         f"Descripcion:\n{descripcion}\n\n"
-        f"(Estado: {conv.estado} | Fuente: {conv.fuente} | Ingesta: {conv.fecha_ingesta})"
+        f"(Fuente: {conv.fuente} | Ingesta: {conv.fecha_ingesta})"
     )
 
 
-async def cmd_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _cmd_ver_convocatoria(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    nombre_cmd: str,
+    listar_hint: str,
+) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
     if not context.args:
-        await update.message.reply_text("Uso: /ver <id o numero>\nEjemplo: /ver 3  o  /ver c4ececba4acfc373")
+        await update.message.reply_text(
+            f"Uso: {nombre_cmd} <numero>\n"
+            f"El numero es el de {listar_hint} en este chat."
+        )
         return
 
     argumento = context.args[0].strip()
@@ -409,7 +480,7 @@ async def cmd_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         else:
             await update.message.reply_text(
                 f"Numero fuera de rango. Hay {len(futuras)} convocatoria(s) futura(s).\n"
-                f"Usa /listar para verlas."
+                f"Usa {listar_hint} para verlas."
             )
             return
     else:
@@ -417,18 +488,22 @@ async def cmd_ver(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not conv:
         await update.message.reply_text(
-            f"No se encontro convocatoria con id '{argumento}'.\n"
-            f"Usa /listar para ver las disponibles."
+            f"No se encontro convocatoria con ese criterio.\n"
+            f"Usa {listar_hint} para ver las disponibles."
         )
         return
 
-    texto = _formatear_convocatoria(conv)
-    MAX_MSG = 4000
-    if len(texto) <= MAX_MSG:
-        await update.message.reply_text(texto)
-    else:
-        await update.message.reply_text(texto[:MAX_MSG])
-        await update.message.reply_text(texto[MAX_MSG:])
+    texto = _formatear_convocatoria(conv, recortar_descripcion=False)
+    await _reply_texto_largo(update, texto)
+
+
+async def cmd_verconvo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _cmd_ver_convocatoria(
+        update,
+        context,
+        nombre_cmd="/verconvo",
+        listar_hint="/listconvo",
+    )
 
 
 async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -450,10 +525,206 @@ async def cmd_idea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     idea = _guardar_idea(texto, fuente="telegram_texto")
     await msg.edit_text(
         f"Idea guardada.\n"
-        f"ID: {idea.id}\n"
-        f"Resumen: {idea.resumen}\n"
-        f"Ruta: {idea.ruta}"
+        f"Resumen: {idea.resumen}"
     )
+
+
+def _ruta_archivo_idea(ruta: str) -> Path:
+    p = Path((ruta or "").strip())
+    if p.is_absolute():
+        return p
+    return (config.DIR_PROYECTO / p).resolve()
+
+
+def _formatear_idea_completa(idea: Idea, cuerpo_md: str) -> str:
+    cuerpo = (cuerpo_md or "").strip()
+    if not cuerpo:
+        cuerpo = "(archivo vacio o no encontrado)"
+    return (
+        f"Resumen: {idea.resumen}\n"
+        f"Tags: {idea.tags or '(ninguno)'}\n"
+        f"Categorias: {idea.categorias or '(ninguna)'}\n"
+        f"Presupuesto aprox.: {idea.presupuesto_aproximado or '(no indicado)'}\n"
+        f"Fecha ingesta: {idea.fecha_ingesta}\n"
+        f"Fuente: {idea.fuente}\n\n"
+        f"--- Contenido ---\n{cuerpo}"
+    )
+
+
+async def cmd_listideas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    ideas = leer_ideas()
+    if not ideas:
+        await update.message.reply_text("No hay ideas registradas en ideas.csv.")
+        return
+
+    ideas = sorted(ideas, key=lambda i: (i.fecha_ingesta or "", i.id), reverse=True)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_IDEAS] = [i.id for i in ideas]
+
+    lineas: list[str] = []
+    for i, idea in enumerate(ideas, 1):
+        res = idea.resumen.strip() or "(sin resumen)"
+        if len(res) > IDEA_RESUMEN_LISTA_MAX:
+            res = res[:IDEA_RESUMEN_LISTA_MAX] + "..."
+        lineas.append(f"{i}. {res}")
+
+    cabecera = f"Ideas ({len(ideas)}), mas recientes primero:\n\n"
+    texto_completo = cabecera + "\n\n".join(lineas)
+    MAX_MSG = 4000
+    if len(texto_completo) <= MAX_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        partes: list[str] = [cabecera]
+        bloque_actual = ""
+        for linea in lineas:
+            if len(partes[-1]) + len(bloque_actual) + len(linea) + 2 > MAX_MSG:
+                partes[-1] += bloque_actual
+                partes.append("")
+                bloque_actual = ""
+            bloque_actual += linea + "\n\n"
+        partes[-1] += bloque_actual
+        for parte in partes:
+            if parte.strip():
+                await update.message.reply_text(parte.strip())
+
+
+async def cmd_veridea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /veridea <numero>\n"
+            "El numero es el de /listideas en este chat."
+        )
+        return
+
+    argumento = context.args[0].strip()
+    idea: Idea | None = None
+
+    if argumento.isdigit():
+        n = int(argumento)
+        cache = (context.chat_data or {}).get(CACHE_RM_IDEAS) or []
+        if n < 1 or n > len(cache):
+            await update.message.reply_text(
+                "Indice invalido o lista antigua. Ejecuta /listideas primero en este chat."
+            )
+            return
+        idea = buscar_idea_por_id(cache[n - 1])
+    else:
+        idea = buscar_idea_por_id(argumento)
+
+    if not idea:
+        await update.message.reply_text(
+            "No se encontro idea con ese criterio.\nUsa /listideas para ver el listado."
+        )
+        return
+
+    path = _ruta_archivo_idea(idea.ruta)
+    cuerpo = ""
+    try:
+        if path.is_file():
+            cuerpo = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        cuerpo = ""
+
+    texto = _formatear_idea_completa(idea, cuerpo)
+    MAX_MSG = 4000
+    if len(texto) <= MAX_MSG:
+        await update.message.reply_text(texto)
+    else:
+        await update.message.reply_text(texto[:MAX_MSG])
+        resto = texto[MAX_MSG:]
+        while resto:
+            trozo = resto[:MAX_MSG]
+            resto = resto[MAX_MSG:]
+            await update.message.reply_text(trozo)
+
+
+async def cmd_rmidea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmidea <numero> [numero ...]\n"
+            "Los numeros son los de /listideas en este chat."
+        )
+        return
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros and enteros:
+        await update.message.reply_text(
+            "Usa solo numeros del listado separados por espacios, o un solo criterio interno."
+        )
+        return
+
+    ids_objetivo: list[str] = []
+    fuera: list[int] = []
+    if otros:
+        if len(otros) != 1:
+            await update.message.reply_text(
+                "Para borrar por criterio interno solo se admite un token."
+            )
+            return
+        ids_objetivo = [otros[0].strip()]
+    else:
+        cache = (context.chat_data or {}).get(CACHE_RM_IDEAS) or []
+        vistos: set[str] = set()
+        for n in enteros:
+            if n < 1 or n > len(cache):
+                fuera.append(n)
+                continue
+            tid = cache[n - 1]
+            if tid not in vistos:
+                vistos.add(tid)
+                ids_objetivo.append(tid)
+        if not ids_objetivo:
+            msg = "Ningun numero valido."
+            if fuera:
+                msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listideas en este chat."
+            await update.message.reply_text(msg)
+            return
+
+    ok_n = 0
+    no_encontradas = 0
+    error_indice = 0
+    archivo_no_borrado = False
+
+    for target_id in ids_objetivo:
+        idea = buscar_idea_por_id(target_id)
+        if not idea:
+            no_encontradas += 1
+            continue
+        path = _ruta_archivo_idea(idea.ruta)
+        removed = eliminar_idea_por_id(idea.id)
+        if not removed:
+            error_indice += 1
+            continue
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                archivo_no_borrado = True
+        ok_n += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_IDEAS, None)
+
+    partes = [f"Ideas eliminadas: {ok_n}."]
+    if not otros and fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_encontradas:
+        partes.append(f"No encontradas: {no_encontradas}.")
+    if error_indice:
+        partes.append(f"Error al quitar del indice: {error_indice}.")
+    if archivo_no_borrado:
+        partes.append("Revisa la carpeta data/ideas por archivos .md huérfanos.")
+    await update.message.reply_text(" ".join(partes))
 
 
 def _generar_id_func(texto: str) -> str:
@@ -494,11 +765,9 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await update.message.reply_text(
-            "Uso: /func <texto> [prioridad 1-5] [estado]\n"
-            "Ejemplo: /func mejorar parser del scraper 4 pendiente\n"
-            "Sin prioridad se usa 3 por defecto.\n\n"
-            "Estados validos: pendiente, en_progreso, hecha\n"
-            "Si no indicas estado, se asume 'pendiente'.\n"
+            "Uso: /func <texto> [prioridad 1-5]\n"
+            "Ejemplo: /func mejorar parser del scraper 4\n"
+            "Sin prioridad se usa 3 por defecto.\n"
             "La prioridad (1-5), si la pones, suele ser el ultimo numero."
         )
         return
@@ -539,10 +808,8 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     emoji = _PRIORIDAD_EMOJI.get(prioridad, "")
     await update.message.reply_text(
         f"Funcionalidad guardada.\n"
-        f"ID: {func.id}\n"
         f"Texto: {func.texto}\n"
-        f"Prioridad: {emoji} {func.prioridad}/5\n"
-        f"Estado: {func.estado}"
+        f"Prioridad: {emoji} {func.prioridad}/5"
     )
 
 
@@ -556,7 +823,7 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text("No hay funcionalidades registradas.")
         return
 
-    todas.sort(key=lambda f: (-f.prioridad, f.estado != "pendiente"))
+    todas.sort(key=lambda f: (-f.prioridad, f.texto.lower()))
 
     if context.chat_data is not None:
         context.chat_data[CACHE_RM_FUNC_IDS] = [f.id for f in todas]
@@ -564,13 +831,12 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     lineas: list[str] = []
     for i, f in enumerate(todas, 1):
         emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
-        estado_tag = f"[{f.estado}]"
         txt = (
             (f.texto[:FUNC_RESUMEN_MAX] + "...")
             if len(f.texto) > FUNC_RESUMEN_MAX
             else f.texto
         )
-        lineas.append(f"{i}. {emoji} P{f.prioridad} {estado_tag} {txt}")
+        lineas.append(f"{i}. {emoji} P{f.prioridad} {txt}")
 
     cabecera = f"Funcionalidades ({len(todas)}):\n\n"
     texto_completo = cabecera + "\n".join(lineas)
@@ -581,6 +847,50 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     else:
         await update.message.reply_text(texto_completo[:MAX_MSG])
         await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+def _formatear_funcionalidad_completa(f: Funcionalidad) -> str:
+    emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
+    return (
+        f"Prioridad: {emoji} {f.prioridad}/5\n"
+        f"Fecha ingesta: {f.fecha_ingesta}\n"
+        f"Fuente: {f.fuente}\n\n"
+        f"Texto:\n{f.texto}"
+    )
+
+
+async def cmd_verfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verfunc <numero>\n"
+            "El numero es el de /listfunc en este chat."
+        )
+        return
+
+    argumento = context.args[0].strip()
+    func: Funcionalidad | None = None
+    if argumento.isdigit():
+        n = int(argumento)
+        cache = (context.chat_data or {}).get(CACHE_RM_FUNC_IDS) or []
+        if n < 1 or n > len(cache):
+            await update.message.reply_text(
+                "Indice invalido o lista antigua. Ejecuta /listfunc primero en este chat."
+            )
+            return
+        func = buscar_func_por_id(cache[n - 1])
+    else:
+        func = buscar_func_por_id(argumento)
+
+    if not func:
+        await update.message.reply_text(
+            "No se encontro esa funcionalidad.\nUsa /listfunc para ver el listado."
+        )
+        return
+
+    await _reply_texto_largo(update, _formatear_funcionalidad_completa(func))
 
 
 def _fecha_evento_ddmmyyyy_a_iso(fecha_dd_mm_yyyy: str) -> str | None:
@@ -899,7 +1209,7 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
 
 
-async def cmd_listevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_listeventos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
@@ -939,10 +1249,78 @@ async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmevento <numero> [numero ...]\n"
+            "Los numeros son los de la ultima lista de /listeventos en este chat."
+        )
+        return
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo numeros del listado, separados por espacios."
+        )
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_EVENTOS) or []
+    fuera: list[int] = []
+    pares: list[tuple[int, str]] = []
+    vistos: set[int] = set()
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if n in vistos:
+            continue
+        vistos.add(n)
+        u = (cache[n - 1] or "").strip()
+        pares.append((n, u))
+
+    if not pares:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listeventos en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    sin_url = 0
+    fallo_borrar = 0
+    ultimo_err = ""
+    for n, url in pares:
+        if not url:
+            sin_url += 1
+            continue
+        if borrar_evento_por_url(url):
+            ok_n += 1
+        else:
+            fallo_borrar += 1
+            ultimo_err = obtener_ultimo_error_evento() or ""
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_EVENTOS, None)
+
+    partes = [f"Eventos eliminados del calendario: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if sin_url:
+        partes.append(f"Sin enlace interno para borrar: {sin_url}.")
+    if fallo_borrar:
+        partes.append(f"No se pudieron borrar: {fallo_borrar}.")
+        if ultimo_err:
+            partes.append(ultimo_err[:200])
+    await update.message.reply_text(" ".join(partes))
+
+
+async def cmd_verevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     if not context.args or len(context.args) != 1:
         await update.message.reply_text(
-            "Uso: /rmevento <numero>\n"
-            "El numero es el de la ultima lista de /listevento en este chat."
+            "Uso: /verevento <numero>\n"
+            "El numero es el de la ultima lista de /listeventos en este chat."
         )
         return
     try:
@@ -954,61 +1332,81 @@ async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     cache = (context.chat_data or {}).get(CACHE_RM_EVENTOS) or []
     if n < 1 or n > len(cache):
         await update.message.reply_text(
-            "Indice invalido o lista antigua. Ejecuta /listevento primero en este chat."
+            "Indice invalido o lista antigua. Ejecuta /listeventos primero en este chat."
         )
         return
 
     url = (cache[n - 1] or "").strip()
     if not url:
+        await update.message.reply_text("No se pudo obtener el evento para mostrar.")
+        return
+
+    detalle = formatear_detalle_evento_por_url(url)
+    if not detalle:
+        err = obtener_ultimo_error_evento()
         await update.message.reply_text(
-            "No hay URL CalDAV para ese evento; no se puede borrar desde el bot."
+            "No se pudo leer el evento.\n" + (err or "sin detalle")
         )
         return
 
-    ok = borrar_evento_por_url(url)
-    if ok:
-        if context.chat_data is not None:
-            context.chat_data.pop(CACHE_RM_EVENTOS, None)
-        await update.message.reply_text(f"Evento {n} eliminado del calendario.")
-    else:
-        err = obtener_ultimo_error_evento()
-        await update.message.reply_text(
-            "No se pudo borrar el evento.\n" + (err or "sin detalle")
-        )
+    await _reply_texto_largo(update, detalle)
 
 
 async def cmd_rmfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
-    if not context.args or len(context.args) != 1:
+    if not context.args:
         await update.message.reply_text(
-            "Uso: /rmfunc <numero>\n"
-            "El numero es el de /listfunc o /listfuncionalidades en este chat."
+            "Uso: /rmfunc <numero> [numero ...]\n"
+            "Los numeros son los de /listfunc en este chat."
         )
         return
-    try:
-        n = int(context.args[0].strip())
-    except ValueError:
-        await update.message.reply_text("El numero debe ser un entero (ej. 1).")
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo numeros del listado, separados por espacios."
+        )
         return
 
     cache = (context.chat_data or {}).get(CACHE_RM_FUNC_IDS) or []
-    if n < 1 or n > len(cache):
-        await update.message.reply_text(
-            "Indice invalido o lista antigua. Ejecuta /listfunc primero en este chat."
-        )
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        fid = cache[n - 1]
+        if fid not in vistos:
+            vistos.add(fid)
+            ids_objetivo.append(fid)
+
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listfunc en este chat."
+        await update.message.reply_text(msg)
         return
 
-    fid = cache[n - 1]
-    if eliminar_func_db(fid):
-        if context.chat_data is not None:
-            context.chat_data.pop(CACHE_RM_FUNC_IDS, None)
-        await update.message.reply_text(f"Funcionalidad {n} eliminada (id {fid}).")
-    else:
-        await update.message.reply_text(
-            "No se pudo eliminar (id no encontrado o error de almacenamiento)."
-        )
+    ok_n = 0
+    fallo_almacen = 0
+    for fid in ids_objetivo:
+        if eliminar_func_db(fid):
+            ok_n += 1
+        else:
+            fallo_almacen += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_FUNC_IDS, None)
+
+    partes = [f"Funcionalidades eliminadas: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if fallo_almacen:
+        partes.append(f"No se pudieron borrar: {fallo_almacen}.")
+    await update.message.reply_text(" ".join(partes))
 
 
 async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1068,9 +1466,86 @@ async def cmd_rmtarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmtarea <numero> [numero ...]\n"
+            "Los numeros son los de la ultima lista de /listtareas en este chat."
+        )
+        return
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo numeros del listado, separados por espacios."
+        )
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_TAREAS_DECK) or []
+    fuera: list[int] = []
+    items_a_borrar: list[tuple[int, dict]] = []
+    vistos: set[int] = set()
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if n in vistos:
+            continue
+        vistos.add(n)
+        items_a_borrar.append((n, cache[n - 1]))
+
+    if not items_a_borrar:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listtareas en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    fallo = 0
+    ultimo_err = ""
+    for _n, item in items_a_borrar:
+        ok = borrar_tarjeta_deck(
+            int(item["board_id"]),
+            int(item["stack_id"]),
+            int(item["card_id"]),
+        )
+        if ok:
+            ok_n += 1
+        else:
+            fallo += 1
+            ultimo_err = obtener_ultimo_error_deck() or ""
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_TAREAS_DECK, None)
+
+    partes = [f"Tareas eliminadas de Deck: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if fallo:
+        partes.append(f"No se pudieron borrar: {fallo}.")
+        if ultimo_err:
+            partes.append(ultimo_err[:200])
+    await update.message.reply_text(" ".join(partes))
+
+
+def _formatear_tarjeta_deck_detalle(d: dict) -> str:
+    labels = ", ".join(d.get("labels") or []) or "(ninguna)"
+    return (
+        f"Titulo: {d.get('title') or '(sin titulo)'}\n"
+        f"Columna: {d.get('stack_title') or '(desconocida)'}\n"
+        f"Vencimiento (Deck): {d.get('duedate') or '(sin fecha)'}\n"
+        f"Etiquetas: {labels}\n\n"
+        f"Descripcion:\n{d.get('description') or '(vacia)'}"
+    )
+
+
+async def cmd_vertarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
     if not context.args or len(context.args) != 1:
         await update.message.reply_text(
-            "Uso: /rmtarea <numero>\n"
+            "Uso: /vertarea <numero>\n"
             "El numero es el de la ultima lista de /listtareas en este chat."
         )
         return
@@ -1088,20 +1563,19 @@ async def cmd_rmtarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     item = cache[n - 1]
-    ok = borrar_tarjeta_deck(
+    d = obtener_tarjeta_deck(
         int(item["board_id"]),
         int(item["stack_id"]),
         int(item["card_id"]),
     )
-    if ok:
-        if context.chat_data is not None:
-            context.chat_data.pop(CACHE_RM_TAREAS_DECK, None)
-        await update.message.reply_text(f"Tarea {n} eliminada de Deck.")
-    else:
+    if not d:
         err = obtener_ultimo_error_deck()
         await update.message.reply_text(
-            "No se pudo borrar la tarjeta.\n" + (err or "sin detalle")
+            "No se pudo leer la tarjeta.\n" + (err or "sin detalle")
         )
+        return
+
+    await _reply_texto_largo(update, _formatear_tarjeta_deck_detalle(d))
 
 
 async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1125,8 +1599,7 @@ async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(
         f"Registro de huevos guardado.\n"
         f"Fecha: {hoy}\n"
-        f"Cantidad: {cantidad}\n"
-        f"ID: {reg.id}"
+        f"Cantidad: {cantidad}"
     )
 
 
@@ -1164,21 +1637,75 @@ async def cmd_listhuevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.reply_text(texto_completo)
 
 
-async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_rmconvo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
     if not context.args:
-        await update.message.reply_text("Uso: /revisar <id>")
+        await update.message.reply_text(
+            "Uso: /rmconvo <numero> [numero ...]\n"
+            "Los numeros son los de /listconvo en este chat."
+        )
         return
-    id_buscar = context.args[0].strip()
-    conv = buscar_por_id(id_buscar)
-    if not conv:
-        await update.message.reply_text(f"No se encontró convocatoria con id '{id_buscar}'")
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros and enteros:
+        await update.message.reply_text(
+            "Usa solo numeros del listado separados por espacios, o un solo criterio interno."
+        )
         return
-    conv.estado = "procesada"
-    actualizar(conv)
-    await update.message.reply_text(f"Convocatoria '{conv.titulo[:40]}...' marcada como procesada.")
+
+    ids_objetivo: list[str] = []
+    fuera: list[int] = []
+    if otros:
+        if len(otros) != 1:
+            await update.message.reply_text(
+                "Para borrar por criterio interno solo se admite un token."
+            )
+            return
+        ids_objetivo = [otros[0].strip()]
+    else:
+        cache = (context.chat_data or {}).get(CACHE_RM_CONVOS) or []
+        vistos: set[str] = set()
+        for n in enteros:
+            if n < 1 or n > len(cache):
+                fuera.append(n)
+                continue
+            tid = cache[n - 1]
+            if tid not in vistos:
+                vistos.add(tid)
+                ids_objetivo.append(tid)
+        if not ids_objetivo:
+            msg = "Ningun numero valido."
+            if fuera:
+                msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listconvo en este chat."
+            await update.message.reply_text(msg)
+            return
+
+    ok_n = 0
+    no_encontradas = 0
+    error_almacen = 0
+    for target_id in ids_objetivo:
+        conv = buscar_por_id(target_id)
+        if not conv:
+            no_encontradas += 1
+            continue
+        if eliminar_por_id(conv.id):
+            ok_n += 1
+        else:
+            error_almacen += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_CONVOS, None)
+
+    partes = [f"Convocatorias eliminadas: {ok_n}."]
+    if not otros and fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_encontradas:
+        partes.append(f"No encontradas: {no_encontradas}.")
+    if error_almacen:
+        partes.append(f"Error al borrar en almacen: {error_almacen}.")
+    await update.message.reply_text(" ".join(partes))
 
 
 async def _procesar_url(update: Update, url: str) -> None:
@@ -1221,20 +1748,198 @@ async def _procesar_url(update: Update, url: str) -> None:
 
     añadir(conv)
     titulo_show = (conv.titulo[:60] + "...") if len(conv.titulo) > 60 else conv.titulo
-    await msg.edit_text(f"Añadida: {titulo_show}\nID: {conv.id}")
+    await msg.edit_text(f"Convocatoria añadida: {titulo_show}")
+
+
+def _formatear_enlace_completo(enlace: Enlace) -> str:
+    return (
+        f"URL: {enlace.url}\n"
+        f"Tags: {enlace.tags or '(ninguno)'}\n"
+        f"Categorias: {enlace.categorias or '(ninguna)'}\n"
+        f"Notas: {enlace.notas or '(ninguna)'}\n"
+        f"Fecha ingesta: {enlace.fecha_ingesta}\n"
+        f"Fuente: {enlace.fuente}"
+    )
+
+
+async def _procesar_url_enlace_guardar(
+    update: Update,
+    url: str,
+    *,
+    notas: str = "",
+    fuente: str = "telegram_url_suelta",
+) -> None:
+    """Guarda una URL en enlaces.csv (sin duplicar por URL exacta)."""
+    msg = await update.message.reply_text("Guardando enlace...")
+    if buscar_enlace_por_url(url):
+        await msg.edit_text("Este enlace ya esta en la lista de enlaces.")
+        return
+    eid = _generar_id(url)
+    enlace = Enlace(
+        id=eid,
+        url=url.strip(),
+        tags="",
+        categorias="",
+        notas=(notas or "").strip(),
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente=fuente,
+    )
+    añadir_enlace(enlace)
+    await msg.edit_text("Enlace guardado.")
+
+
+async def cmd_url(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/url"):
+        texto_raw = texto_raw[len("/url") :].strip()
+    if not texto_raw:
+        await update.message.reply_text(
+            "Uso: /url <https://...> [notas opcionales]\n"
+            "Puedes pegar la URL en el mismo mensaje; el resto se guarda como notas."
+        )
+        return
+    url = _extraer_url(texto_raw)
+    if not url:
+        await update.message.reply_text("No se detecto una URL valida (https://...).")
+        return
+    notas = texto_raw.replace(url, "", 1).strip()
+    await _procesar_url_enlace_guardar(update, url, notas=notas, fuente="telegram_comando")
+
+
+async def cmd_listurl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    enlaces = leer_enlaces()
+    if not enlaces:
+        await update.message.reply_text("No hay enlaces en enlaces.csv.")
+        return
+
+    enlaces.sort(key=lambda e: (e.fecha_ingesta or "", e.id), reverse=True)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_ENLACES] = [e.id for e in enlaces]
+
+    lineas: list[str] = []
+    for i, e in enumerate(enlaces, 1):
+        u = e.url.strip()
+        if len(u) > ENLACE_RESUMEN_LISTA_MAX:
+            u = u[:ENLACE_RESUMEN_LISTA_MAX] + "..."
+        lineas.append(f"{i}. {u}")
+
+    cabecera = f"Enlaces ({len(enlaces)}), mas recientes primero:\n\n"
+    texto_completo = cabecera + "\n\n".join(lineas)
+    if len(texto_completo) <= 4000:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:4000])
+        await update.message.reply_text(texto_completo[4000:])
+
+
+async def cmd_verurl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text(
+            "Uso: /verurl <numero>\n"
+            "El numero es el de /listurl en este chat."
+        )
+        return
+    argumento = context.args[0].strip()
+    if not argumento.isdigit():
+        await update.message.reply_text("El numero debe ser un entero (ej. 1).")
+        return
+    n = int(argumento)
+    cache = (context.chat_data or {}).get(CACHE_RM_ENLACES) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text(
+            "Indice invalido o lista antigua. Ejecuta /listurl primero en este chat."
+        )
+        return
+    enlace = buscar_enlace_por_id(cache[n - 1])
+    if not enlace:
+        await update.message.reply_text(
+            "No se encontro ese enlace.\nUsa /listurl para refrescar el listado."
+        )
+        return
+    await _reply_texto_largo(update, _formatear_enlace_completo(enlace))
+
+
+async def cmd_rmurl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmurl <numero> [numero ...]\n"
+            "Los numeros son los de /listurl en este chat."
+        )
+        return
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo numeros del listado, separados por espacios."
+        )
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_ENLACES) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        eid = cache[n - 1]
+        if eid not in vistos:
+            vistos.add(eid)
+            ids_objetivo.append(eid)
+
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listurl en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    fallo = 0
+    for eid in ids_objetivo:
+        if eliminar_enlace_por_id(eid):
+            ok_n += 1
+        else:
+            fallo += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_ENLACES, None)
+
+    partes = [f"Enlaces eliminados: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if fallo:
+        partes.append(f"No se pudieron borrar: {fallo}.")
+    await update.message.reply_text(" ".join(partes))
 
 
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Si el mensaje contiene una URL, la procesa como nueva convocatoria."""
+    """Si el mensaje contiene una URL suelta, la guarda como enlace sin categorizar."""
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
     texto = update.message.text or ""
     url = _extraer_url(texto)
     if url:
-        await _procesar_url(update, url)
+        await _procesar_url_enlace_guardar(update, url)
     else:
-        await update.message.reply_text("Envía una URL o usa /ayuda para ver comandos.")
+        await update.message.reply_text(
+            "Envia una URL para guardarla como enlace, /convo <url> para convocatoria, "
+            "o /ayuda para ver comandos."
+        )
 
 
 async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1282,9 +1987,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             idea = _guardar_idea(contenido, fuente="telegram_audio")
             await estado.edit_text(
                 f"Idea guardada desde audio.\n"
-                f"ID: {idea.id}\n"
-                f"Resumen: {idea.resumen}\n"
-                f"Ruta: {idea.ruta}"
+                f"Resumen: {idea.resumen}"
             )
 
         elif accion == "funcionalidad":
@@ -1311,10 +2014,8 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             emoji = _PRIORIDAD_EMOJI.get(func.prioridad, "")
             await estado.edit_text(
                 f"Funcionalidad guardada desde audio.\n"
-                f"ID: {func.id}\n"
                 f"Texto: {func.texto}\n"
-                f"Prioridad: {emoji} {func.prioridad}/5\n"
-                f"Estado: {func.estado}"
+                f"Prioridad: {emoji} {func.prioridad}/5"
             )
 
         elif accion == "tarea":
@@ -1437,9 +2138,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             idea = _guardar_idea(contenido, fuente="telegram_audio")
             await estado.edit_text(
                 f"Idea guardada desde audio (sin accion detectada).\n"
-                f"ID: {idea.id}\n"
-                f"Resumen: {idea.resumen}\n"
-                f"Ruta: {idea.ruta}"
+                f"Resumen: {idea.resumen}"
             )
 
     except Exception as exc:
@@ -1474,25 +2173,34 @@ def main() -> None:
 
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
-    app.add_handler(CommandHandler("sube", cmd_añadir))
+    app.add_handler(CommandHandler("convo", cmd_convo))
+    app.add_handler(CommandHandler("url", cmd_url))
+    app.add_handler(CommandHandler("listurl", cmd_listurl))
+    app.add_handler(CommandHandler("verurl", cmd_verurl))
+    app.add_handler(CommandHandler("rmurl", cmd_rmurl))
     app.add_handler(CommandHandler("idea", cmd_idea))
-    app.add_handler(CommandHandler("listar", cmd_listar))
-    app.add_handler(CommandHandler("list", cmd_listar))
-    app.add_handler(CommandHandler("ver", cmd_ver))
+    app.add_handler(CommandHandler("listideas", cmd_listideas))
+    app.add_handler(CommandHandler("veridea", cmd_veridea))
+    app.add_handler(CommandHandler("rmidea", cmd_rmidea))
+    app.add_handler(CommandHandler("listconvo", cmd_listar))
+    app.add_handler(CommandHandler("verconvo", cmd_verconvo))
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("listfuncionalidades", cmd_listfunc))
+    app.add_handler(CommandHandler("verfunc", cmd_verfunc))
     app.add_handler(CommandHandler("rmfunc", cmd_rmfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
     app.add_handler(CommandHandler("comprar", cmd_comprar))
     app.add_handler(CommandHandler("evento", cmd_evento))
-    app.add_handler(CommandHandler("listevento", cmd_listevento))
+    app.add_handler(CommandHandler("listeventos", cmd_listeventos))
+    app.add_handler(CommandHandler("verevento", cmd_verevento))
     app.add_handler(CommandHandler("rmevento", cmd_rmevento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))
+    app.add_handler(CommandHandler("vertarea", cmd_vertarea))
     app.add_handler(CommandHandler("rmtarea", cmd_rmtarea))
     app.add_handler(CommandHandler("huevos", cmd_huevos))
     app.add_handler(CommandHandler("listhuevos", cmd_listhuevos))
-    app.add_handler(CommandHandler("revisar", cmd_revisar))
+    app.add_handler(CommandHandler("rmconvo", cmd_rmconvo))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
     app.add_error_handler(error_handler)

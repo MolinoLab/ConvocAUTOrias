@@ -2,6 +2,7 @@
 Sincroniza copias de datos locales a Nextcloud:
 - data/convocatorias.csv
 - data/ideas.csv
+- data/enlaces.csv
 - data/ideas/*.md y *.txt
 """
 import sys
@@ -33,6 +34,11 @@ def sync_nextcloud_datos() -> dict:
         config.CSV_IDEAS,
         "ideas.csv",
     )
+    if config.CSV_ENLACES.exists():
+        resultados["enlaces_csv"] = _subir_si_existe(
+            config.CSV_ENLACES,
+            "enlaces.csv",
+        )
 
     ideas_subidas = 0
     ideas_total = 0

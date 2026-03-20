@@ -24,8 +24,8 @@ pip install -r requirements.txt
    ```bash
    python -m bot.telegram_bot
    ```
-   Comandos: `/sube <url>`, `/idea <texto>`, `/func <texto> <prioridad> [estado]`, `/listfunc`, `/listar`, `/revisar <id>`, `/ayuda`.
-   También puedes enviar una URL directamente. Si envías un audio, el bot lo transcribe y lo guarda como idea.
+   Comandos principales: `/convo <url>`, `/url <url>`, `/listconvo`, `/listurl`, `/idea <texto>`, `/func <texto> [prioridad]`, `/ayuda`.
+   Una URL suelta (sin comando) se guarda en `data/enlaces.csv`. Convocatorias solo con `/convo`. Si envías un audio, el bot lo transcribe y lo guarda como idea.
 
 3. **Revisar plazos y notificaciones**:
    ```bash
@@ -169,19 +169,24 @@ CALDAV_CALENDAR_NAME=MolinoLab
 │                     │         http_request (skills)              │      │
 │                     │◄──────────────────────────────────────────┘      │
 │                     ▼                          Ollama (modelo local)   │
-│              /app/data (convocatorias + ideas + funcionalidad)          │
+│              /app/data (convocatorias + ideas + enlaces + funcionalidad) │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Bot de Telegram
 
-El bot permite tres flujos:
+El bot permite varios flujos:
 
 1. **Convocatorias**:
-   - `/sube <url>` o enviar una URL directamente.
+   - `/convo <url>` para añadir una convocatoria (scraping cuando sea posible).
+   - `/listconvo`, `/verconvo <n>`, `/rmconvo <n> [n ...]`.
    - Se guarda en `data/convocatorias.csv` (o `data/convocatorias.db` si existe SQLite).
 
-2. **Ideas**:
+2. **Enlaces sin categorizar**:
+   - URL suelta en el chat o `/url <https://...> [notas]` → `data/enlaces.csv` (columnas `tags`, `categorias` editables en el CSV).
+   - `/listurl`, `/verurl <n>`, `/rmurl <n> [n ...]`.
+
+3. **Ideas**:
    - `/idea <texto>` para guardar una idea en modelo hibrido.
    - Enviar **audio** o **nota de voz**: se transcribe y se guarda como idea.
    - Persistencia hibrida:
@@ -189,15 +194,14 @@ El bot permite tres flujos:
      - Desarrollo completo en `data/ideas/{id}.md`.
    - Restriccion de acceso: el bot solo responde a usuarios permitidos en `TELEGRAM_ALLOWLIST`.
 
-3. **Funcionalidades** (tareas de desarrollo pendientes):
-   - `/func <texto> <prioridad 1-5> [estado]` para registrar una funcionalidad.
-   - `/listfunc` para listar todas las funcionalidades ordenadas por prioridad (mayor primero).
+4. **Funcionalidades** (tareas de desarrollo pendientes):
+   - `/func <texto> [prioridad 1-5]` para registrar (prioridad por defecto 3; el estado se gestiona en almacenamiento pero no se muestra en el bot).
+   - `/listfunc`, `/verfunc <n>`, `/rmfunc <n> [n ...]`.
    - Prioridad: numérica de 1 (baja) a 5 (urgente).
-   - Estados válidos: `pendiente`, `en_progreso`, `hecha` (por defecto: `pendiente`).
    - Persistencia en `data/funcionalidad.csv` (o `data/funcionalidad.db` si existe SQLite).
-   - Esquema: `id`, `texto`, `prioridad`, `estado`, `fecha_ingesta`, `fuente`.
-   - Ejemplo: `/func mejorar parser del scraper 4 pendiente`
    - API: `GET /funcionalidad` (listar), `POST /funcionalidad` (crear).
+
+Otros comandos del bot: tareas Nextcloud Deck (`/tarea`, `/listtareas`, …), eventos CalDAV (`/evento`, `/listeventos`, …), huevos (`/huevos`, `/listhuevos`). Ver `/ayuda` en Telegram.
 
 Flujo diario de ideas manuales:
 - El workflow `04-indexar-ideas.json` llama al endpoint `POST /indexar-ideas`.
@@ -205,7 +209,7 @@ Flujo diario de ideas manuales:
 
 Sincronizacion con Nextcloud:
 - El workflow `05-sync-nextcloud-datos.json` llama al endpoint `POST /sync-nextcloud-datos`.
-- Sube `data/convocatorias.csv`, `data/ideas.csv` y los ficheros de `data/ideas/` a `Documents/b1tacora/b1tdreamer/Ideas`.
+- Sube `data/convocatorias.csv`, `data/ideas.csv`, `data/enlaces.csv` (si existe) y los ficheros de `data/ideas/` a `Documents/b1tacora/b1tdreamer/Ideas`.
 
 ## OpenClaw (asistente conversacional)
 
