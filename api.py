@@ -2,6 +2,7 @@
 API mínima para que n8n y OpenClaw invoquen las tareas del proyecto vía HTTP.
 Endpoints: POST /scrape, POST /revisar, POST /notificar-agenda-manana, POST /sync-caldav,
            POST /indexar-ideas, POST /sync-nextcloud-datos, POST /generar-borrador,
+           POST /procesar-investigaciones,
            GET /funcionalidad, POST /funcionalidad
 """
 import subprocess
@@ -39,6 +40,12 @@ def _run_script(module: str, *args: str) -> dict:
 def scrape():
     """Ejecuta un ciclo del worker scraper (--once)."""
     return _run_script("scripts.worker_scraper", "--once")
+
+
+@app.post("/procesar-investigaciones")
+def procesar_investigaciones():
+    """Procesa investigaciones pendientes (búsqueda + Ollama + Telegram)."""
+    return _run_script("scripts.procesar_investigaciones", "--once")
 
 
 @app.post("/revisar")

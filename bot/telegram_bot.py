@@ -1,6 +1,7 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
-ideas, proyectos, tiempos, enlaces, funcionalidades, tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
+ideas, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
+tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import hashlib
@@ -36,6 +37,7 @@ from src.db_funcionalidad import (
     listar as listar_func,
     eliminar as eliminar_func_db,
 )
+from src.db_investigaciones import Investigacion, añadir as añadir_investigacion
 from src.db_enlaces import (
     Enlace,
     añadir_enlace,
@@ -379,6 +381,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listfunc o /listfuncionalidades — Listar por prioridad\n"
         "/verfunc <numero>\n"
         "/rmfunc <num ...>\n\n"
+        "[Investigaciones]\n"
+        "/investiga <concepto o frase> — Encola investigación (CSV + proceso automático)\n\n"
         "[Tareas Deck]\n"
         '/tarea "Titulo" [fecha] ["Desc"] — Tarjeta (columna por defecto)\n'
         f'/comprar "Titulo" [fecha] ["Desc"] — Columna "{DECK_STACK_COMPRAR}"\n'
@@ -1416,6 +1420,11 @@ def _generar_id_func(texto: str) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
 
+def _generar_id_investigacion(texto: str) -> str:
+    base = f"{datetime.now().isoformat()}::inv::{texto[:500]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
 _PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
 
 
@@ -1494,6 +1503,37 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"Funcionalidad guardada.\n"
         f"Texto: {func.texto}\n"
         f"Prioridad: {emoji} {func.prioridad}/5"
+    )
+
+
+async def cmd_investiga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /investiga <concepto o frase>\n"
+            "Se guarda en investigaciones.csv como pendiente; el proceso automático "
+            "completará resumen, enlace y un .md en data/investigaciones/."
+        )
+        return
+    concepto = " ".join(context.args).strip()
+    if not concepto:
+        await update.message.reply_text("El concepto no puede estar vacío.")
+        return
+    inv = Investigacion(
+        id=_generar_id_investigacion(concepto),
+        fecha=datetime.now().isoformat(),
+        estado="pendiente",
+        concepto=concepto,
+        resumen="",
+        link="",
+    )
+    añadir_investigacion(inv)
+    await update.message.reply_text(
+        f"Investigación encolada (pendiente).\n"
+        f"ID: {inv.id}\n"
+        f"Concepto: {inv.concepto}"
     )
 
 
@@ -2880,6 +2920,7 @@ def main() -> None:
     app.add_handler(CommandHandler("modtiempo", cmd_modtiempo))
     app.add_handler(CommandHandler("listconvo", cmd_listar))
     app.add_handler(CommandHandler("verconvo", cmd_verconvo))
+    app.add_handler(CommandHandler("investiga", cmd_investiga))
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("listfuncionalidades", cmd_listfunc))

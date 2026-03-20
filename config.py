@@ -29,6 +29,8 @@ CALDAV_CALENDAR_URL = (
 # Ollama (IA local)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
+_ollama_inv = os.getenv("OLLAMA_MODEL_INVESTIGACION", "").strip()
+OLLAMA_MODEL_INVESTIGACION = _ollama_inv if _ollama_inv else OLLAMA_MODEL
 
 # Nextcloud WebDAV
 NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
@@ -84,6 +86,19 @@ CARPETA_IDEAS = DATA_DIR / "ideas"
 CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
 CARPETA_PROYECTOS = DATA_DIR / "proyectos"
 CARPETA_PROYECTOS.mkdir(parents=True, exist_ok=True)
+CSV_INVESTIGACIONES = DATA_DIR / "investigaciones.csv"
+CARPETA_INVESTIGACIONES = DATA_DIR / "investigaciones"
+CARPETA_INVESTIGACIONES.mkdir(parents=True, exist_ok=True)
+
+# Investigaciones (/investiga + worker)
+SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
+INVESTIGACION_SEARCH_MAX = max(1, int(os.getenv("INVESTIGACION_SEARCH_MAX", "5")))
+INVESTIGACION_FETCH_TOP = max(0, int(os.getenv("INVESTIGACION_FETCH_TOP", "2")))
+INVESTIGACION_FETCH_MAX_CHARS = max(500, int(os.getenv("INVESTIGACION_FETCH_MAX_CHARS", "6000")))
+MAX_INVESTIGACIONES_POR_CICLO = max(1, int(os.getenv("MAX_INVESTIGACIONES_POR_CICLO", "3")))
+INVESTIGACION_SLEEP_SEC = max(0.0, float(os.getenv("INVESTIGACION_SLEEP_SEC", "4")))
+TIMEOUT_OLLAMA_INVESTIGACION = max(30, int(os.getenv("TIMEOUT_OLLAMA_INVESTIGACION", "180")))
+TIMEOUT_BUSQUEDA_INVESTIGACION = max(5, int(os.getenv("TIMEOUT_BUSQUEDA_INVESTIGACION", "25")))
 
 # Migración ligera desde instalaciones previas (solo convocatorias.csv)
 _csv_legacy = DIR_PROYECTO / "convocatorias.csv"

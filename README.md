@@ -124,6 +124,16 @@ TELEGRAM_ALLOWLIST=@b1tdreamer
 # Ollama (en Docker usa http://ollama:11434)
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=phi3:mini
+# Opcional: modelo solo para /investiga (por defecto = OLLAMA_MODEL)
+# OLLAMA_MODEL_INVESTIGACION=qwen2.5:3b
+
+# Investigaciones (/investiga): búsqueda en Python (ver workflow 07 en n8n)
+# Si defines SEARXNG_URL se usa en lugar de DuckDuckGo (paquete duckduckgo-search).
+# SEARXNG_URL=https://busqueda.ejemplo
+# INVESTIGACION_SEARCH_MAX=5
+# INVESTIGACION_FETCH_TOP=2
+# MAX_INVESTIGACIONES_POR_CICLO=3
+# INVESTIGACION_SLEEP_SEC=4
 
 # Whisper (transcripcion de audio)
 WHISPER_MODEL=base
