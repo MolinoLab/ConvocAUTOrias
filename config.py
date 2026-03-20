@@ -76,10 +76,14 @@ CSV_IDEAS = DATA_DIR / "ideas.csv"
 CSV_FUNCIONALIDAD = DATA_DIR / "funcionalidad.csv"
 CSV_ENLACES = DATA_DIR / "enlaces.csv"
 CSV_HUEVOS = DATA_DIR / "huevos.csv"
+CSV_PROYECTOS = DATA_DIR / "proyectos.csv"
+CSV_TIEMPOS = DATA_DIR / "tiempos.csv"
 DB_SQLITE = DATA_DIR / "convocatorias.db"
 DB_FUNCIONALIDAD = DATA_DIR / "funcionalidad.db"
 CARPETA_IDEAS = DATA_DIR / "ideas"
 CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
+CARPETA_PROYECTOS = DATA_DIR / "proyectos"
+CARPETA_PROYECTOS.mkdir(parents=True, exist_ok=True)
 
 # Migración ligera desde instalaciones previas (solo convocatorias.csv)
 _csv_legacy = DIR_PROYECTO / "convocatorias.csv"

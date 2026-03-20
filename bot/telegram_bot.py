@@ -1,6 +1,6 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
-ideas, enlaces, funcionalidades, tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
+ideas, proyectos, tiempos, enlaces, funcionalidades, tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import hashlib
@@ -9,7 +9,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Añadir proyecto al path
@@ -59,6 +59,33 @@ from src.deck_client import (
     obtener_ultimo_error_deck,
 )
 from src.db_huevos import añadir as añadir_huevo, resumen_ultimos_dias_desde_hoy
+from src.db_proyectos import (
+    ESTADOS_PROYECTO_VALIDOS,
+    Proyecto,
+    añadir_proyecto,
+    buscar_por_id as buscar_proyecto_por_id,
+    eliminar_por_id as eliminar_proyecto_por_id,
+    leer_proyectos,
+    tiempo_total_minutos,
+)
+from src.db_tiempos import (
+    Tiempo,
+    añadir_tiempo,
+    buscar_activo_global,
+    buscar_por_id as buscar_tiempo_por_id,
+    cerrar_tiempo,
+    eliminar_todos_de_proyecto,
+    es_activo,
+    leer_tiempos,
+    sincronizar_tiempo_total_proyecto,
+)
+from src.fechas_proyecto import (
+    formatear_fecha,
+    formatear_fecha_hora,
+    formatear_minutos_como_texto,
+    parsear_fecha_hora,
+    parsear_solo_fecha,
+)
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -80,12 +107,21 @@ CACHE_RM_EVENTOS = "rm_evento_urls"
 CACHE_RM_IDEAS = "rm_idea_ids"
 CACHE_RM_CONVOS = "rm_conv_ids"
 CACHE_RM_ENLACES = "rm_enlace_ids"
+CACHE_RM_PROYECTOS = "rm_proyecto_ids"
+CACHE_RM_TIEMPOS = "rm_tiempo_ids"
+WIZARD_PROYECTO_KEY = "proyecto_wizard"
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
 IDEA_RESUMEN_LISTA_MAX = 70
 ENLACE_RESUMEN_LISTA_MAX = 72
 MAX_TELEGRAM_MSG = 4000
+PROYECTO_RESUMEN_LISTA_MAX = 60
+TIEMPO_RESUMEN_LISTA_MAX = 55
+
+_EMAIL_PROYECTO_RE = re.compile(
+    r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
+)
 
 
 def _parsear_tokens_rm(args: list[str]) -> tuple[list[int], list[str]]:
@@ -325,6 +361,19 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listideas — Listar (recientes primero)\n"
         "/veridea <numero>\n"
         "/rmidea <num ...>\n\n"
+        "[Proyectos]\n"
+        "/proyecto — Alta guiada (titulo, fechas, contacto, estado, descripcion en .md)\n"
+        "/cancelarproyecto — Abortar la alta guiada\n"
+        "/listproyecto — Listar\n"
+        "/verproyecto <numero>\n"
+        "/rmproyecto <num ...>\n\n"
+        "[Tiempos por proyecto]\n"
+        "/tiempo <num_proyecto> — Iniciar (un solo activo global)\n"
+        "/tiempofin — Cerrar el tiempo activo\n"
+        "/tiempo <num_proyecto> <minutos> — Sumar tiempo (hoy desde 00:00)\n"
+        "/listtiempo — Listar registros (indice para /modtiempo)\n"
+        "/vertiempo <numero>\n"
+        "/modtiempo <num_tiempo> <fecha hora fin> — Corregir fin y duracion\n\n"
         "[Funcionalidades]\n"
         "/func <texto> [prioridad 1-5] — Registrar (prioridad por defecto 3)\n"
         "/listfunc o /listfuncionalidades — Listar por prioridad\n"
@@ -348,7 +397,9 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Primera palabra: idea, funcionalidad, tarea, comprar, evento. "
         "Si no coincide, se guarda como idea.\n\n"
         "Fechas (tarea/evento): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual. "
-        "En tareas tambien YYYY-MM-DD.\n\n"
+        "En tareas tambien YYYY-MM-DD.\n"
+        "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
+        "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
         "/ayuda — Esta lista"
     )
     await _reply_texto_largo(update, texto)
@@ -725,6 +776,639 @@ async def cmd_rmidea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if archivo_no_borrado:
         partes.append("Revisa la carpeta data/ideas por archivos .md huérfanos.")
     await update.message.reply_text(" ".join(partes))
+
+
+# --- Proyectos y tiempos ---
+
+
+def _generar_id_proyecto(titulo: str) -> str:
+    base = f"{datetime.now().isoformat()}::proyecto::{titulo[:500]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+def _generar_id_tiempo(id_proyecto: str, inicio_iso_hint: str) -> str:
+    base = f"{datetime.now().isoformat()}::tiempo::{id_proyecto}::{inicio_iso_hint}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+def _ruta_archivo_proyecto(ruta: str) -> Path:
+    p = Path(ruta)
+    if p.is_absolute():
+        return p
+    return (config.DIR_PROYECTO / p).resolve()
+
+
+def _limpiar_wizard_proyecto(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_PROYECTO_KEY, None)
+
+
+def _wizard_proyecto_prompt_paso(step: int) -> str:
+    if step == 0:
+        return "Nuevo proyecto — paso 1/8: Titulo del proyecto (una linea)."
+    if step == 1:
+        return (
+            "Paso 2/8: Fecha de creacion (flexible: DD,MM,YYYY / DD-MM / solo DD…). "
+            "Escribe hoy para usar la fecha de hoy."
+        )
+    if step == 2:
+        return "Paso 3/8: Persona de contacto."
+    if step == 3:
+        return "Paso 4/8: Email de contacto."
+    if step == 4:
+        return "Paso 5/8: Presupuesto (texto o numero). Escribe - si no aplica."
+    if step == 5:
+        return (
+            "Paso 6/8: Fecha fin prevista (mismo formato flexible) o - si no hay."
+        )
+    if step == 6:
+        return (
+            "Paso 7/8: Estado: idea | activo | en_espera | presupuestado | completado | cancelado"
+        )
+    if step == 7:
+        return (
+            "Paso 8/8: Descripcion larga (markdown, una o varias lineas) o - si no hay."
+        )
+    return ""
+
+
+def _email_valido_proyecto(s: str) -> bool:
+    return bool(_EMAIL_PROYECTO_RE.match((s or "").strip()))
+
+
+def _proyecto_desde_indice_listado(
+    context: ContextTypes.DEFAULT_TYPE, indice: int
+) -> Proyecto | None:
+    cache = (context.chat_data or {}).get(CACHE_RM_PROYECTOS) or []
+    if indice < 1 or indice > len(cache):
+        return None
+    return buscar_proyecto_por_id(cache[indice - 1])
+
+
+def _ordenar_tiempos_recientes(items: list[Tiempo]) -> list[Tiempo]:
+    def clave(t: Tiempo) -> tuple:
+        dt = parsear_fecha_hora(t.fecha_hora_inicio)
+        if dt is None:
+            return (datetime.min, t.id)
+        return (dt, t.id)
+
+    return sorted(items, key=clave, reverse=True)
+
+
+def _formatear_proyecto_lista(p: Proyecto) -> str:
+    tit = p.titulo.strip() or "(sin titulo)"
+    if len(tit) > PROYECTO_RESUMEN_LISTA_MAX:
+        tit = tit[:PROYECTO_RESUMEN_LISTA_MAX] + "..."
+    tm = formatear_minutos_como_texto(tiempo_total_minutos(p))
+    return f"{tit} [{p.estado}] tiempo {tm}"
+
+
+def _formatear_proyecto_completo(p: Proyecto, cuerpo_md: str) -> str:
+    ff = p.fecha_fin.strip() or "(sin fecha fin)"
+    pres = p.presupuesto.strip() or "(no indicado)"
+    return (
+        f"Titulo: {p.titulo}\n"
+        f"Fecha creacion: {p.fecha_creacion}\n"
+        f"Contacto: {p.persona_contacto}\n"
+        f"Email: {p.email_contacto}\n"
+        f"Presupuesto: {pres}\n"
+        f"Tiempo total: {formatear_minutos_como_texto(tiempo_total_minutos(p))}\n"
+        f"Fecha fin: {ff}\n"
+        f"Estado: {p.estado}\n"
+        f"Fuente: {p.fuente}\n\n"
+        f"Descripcion / notas:\n{cuerpo_md.strip() or '(vacio)'}"
+    )
+
+
+async def cmd_proyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    user = update.effective_user
+    if not user:
+        return
+    if context.chat_data is None:
+        await update.message.reply_text("No se pudo iniciar el asistente en este chat.")
+        return
+
+    context.chat_data[WIZARD_PROYECTO_KEY] = {
+        "user_id": user.id,
+        "step": 0,
+        "data": {},
+    }
+    await update.message.reply_text(
+        _wizard_proyecto_prompt_paso(0) + "\n\n/cancelarproyecto para abortar."
+    )
+
+
+async def cmd_cancelarproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if (context.chat_data or {}).get(WIZARD_PROYECTO_KEY):
+        _limpiar_wizard_proyecto(context)
+        await update.message.reply_text("Alta de proyecto cancelada.")
+    else:
+        await update.message.reply_text("No habia un proyecto en curso.")
+
+
+async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Si consume el mensaje, devuelve True."""
+    wizard = (context.chat_data or {}).get(WIZARD_PROYECTO_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or user.id != wizard.get("user_id"):
+        return False
+
+    texto_raw = (update.message.text or "").strip()
+    if not texto_raw:
+        await update.message.reply_text("Envia texto o /cancelarproyecto.")
+        return True
+
+    step: int = wizard["step"]
+    data: dict = wizard["data"]
+
+    if step == 0:
+        if not texto_raw:
+            await update.message.reply_text("El titulo no puede estar vacio.")
+            return True
+        data["titulo"] = texto_raw
+        wizard["step"] = 1
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(1))
+        return True
+
+    if step == 1:
+        tnorm = texto_raw.lower()
+        if tnorm in ("hoy", "today"):
+            dt = datetime.now()
+        else:
+            dt = parsear_solo_fecha(texto_raw)
+            if dt is None:
+                await update.message.reply_text(
+                    "Fecha no reconocida. Usa DD,MM,YYYY / DD-MM / solo DD… o la palabra hoy."
+                )
+                return True
+        data["fecha_creacion"] = formatear_fecha(dt)
+        wizard["step"] = 2
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(2))
+        return True
+
+    if step == 2:
+        data["persona_contacto"] = texto_raw
+        wizard["step"] = 3
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(3))
+        return True
+
+    if step == 3:
+        if not _email_valido_proyecto(texto_raw):
+            await update.message.reply_text("Email no valido. Vuelve a intentarlo.")
+            return True
+        data["email_contacto"] = texto_raw.strip()
+        wizard["step"] = 4
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(4))
+        return True
+
+    if step == 4:
+        data["presupuesto"] = "" if texto_raw in ("-", "—") else texto_raw
+        wizard["step"] = 5
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(5))
+        return True
+
+    if step == 5:
+        if texto_raw in ("-", "—"):
+            data["fecha_fin"] = ""
+        else:
+            dt = parsear_solo_fecha(texto_raw)
+            if dt is None:
+                await update.message.reply_text("Fecha fin no reconocida. Usa - si no hay.")
+                return True
+            data["fecha_fin"] = formatear_fecha(dt)
+        wizard["step"] = 6
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(6))
+        return True
+
+    if step == 6:
+        est = texto_raw.lower().strip()
+        if est not in ESTADOS_PROYECTO_VALIDOS:
+            await update.message.reply_text(
+                "Estado no valido. Usa uno de: idea, activo, en_espera, presupuestado, "
+                "completado, cancelado"
+            )
+            return True
+        data["estado"] = est
+        wizard["step"] = 7
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(7))
+        return True
+
+    if step == 7:
+        cuerpo = "" if texto_raw in ("-", "—") else texto_raw
+        pid = _generar_id_proyecto(data["titulo"])
+        config.CARPETA_PROYECTOS.mkdir(parents=True, exist_ok=True)
+        ruta_abs = config.CARPETA_PROYECTOS / f"{pid}.md"
+        try:
+            ruta_rel = ruta_abs.relative_to(config.DIR_PROYECTO).as_posix()
+        except Exception:
+            ruta_rel = str(ruta_abs)
+        ruta_rel = ruta_rel.replace("\\", "/")
+
+        plantilla = (
+            f"# {data['titulo']}\n\n"
+            f"**Contacto:** {data['persona_contacto']} <{data['email_contacto']}>\n\n"
+        )
+        ruta_abs.write_text(plantilla + (cuerpo.strip() + "\n" if cuerpo else ""), encoding="utf-8")
+
+        p = Proyecto(
+            id=pid,
+            titulo=data["titulo"],
+            fecha_creacion=data["fecha_creacion"],
+            persona_contacto=data["persona_contacto"],
+            email_contacto=data["email_contacto"],
+            presupuesto=data.get("presupuesto", ""),
+            tiempo_total="0",
+            fecha_fin=data.get("fecha_fin", ""),
+            estado=data["estado"],
+            ruta=ruta_rel,
+            fuente="telegram",
+        )
+        añadir_proyecto(p)
+        _limpiar_wizard_proyecto(context)
+        await update.message.reply_text(
+            f"Proyecto guardado.\nID interno: {pid}\nTitulo: {p.titulo}\n"
+            f"Estado: {p.estado}\n\n"
+            f"Usa /listproyecto y /tiempo <numero> para registrar tiempo."
+        )
+        return True
+
+    return False
+
+
+async def cmd_listproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    proyectos = leer_proyectos()
+    if not proyectos:
+        await update.message.reply_text("No hay proyectos en proyectos.csv.")
+        return
+    def _clave_fecha_creacion(p: Proyecto) -> datetime:
+        dt = parsear_solo_fecha(p.fecha_creacion)
+        return dt if dt is not None else datetime.min
+
+    proyectos.sort(
+        key=lambda p: (_clave_fecha_creacion(p), p.titulo.lower()),
+        reverse=True,
+    )
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_PROYECTOS] = [p.id for p in proyectos]
+
+    lineas = []
+    for i, p in enumerate(proyectos, 1):
+        lineas.append(f"{i}. {_formatear_proyecto_lista(p)}")
+    cabecera = f"Proyectos ({len(proyectos)}), mas recientes primero:\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+    if len(texto_completo) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_TELEGRAM_MSG])
+        await update.message.reply_text(texto_completo[MAX_TELEGRAM_MSG:])
+
+
+async def cmd_verproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verproyecto <numero>\n"
+            "El numero es el de /listproyecto en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    p: Proyecto | None = None
+    if arg.isdigit():
+        p = _proyecto_desde_indice_listado(context, int(arg))
+    else:
+        p = buscar_proyecto_por_id(arg)
+    if not p:
+        await update.message.reply_text(
+            "No se encontro ese proyecto.\nUsa /listproyecto para ver el listado."
+        )
+        return
+    path = _ruta_archivo_proyecto(p.ruta)
+    try:
+        cuerpo = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        cuerpo = ""
+    await _reply_texto_largo(update, _formatear_proyecto_completo(p, cuerpo))
+
+
+async def cmd_rmproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmproyecto <numero> [numero ...]\n"
+            "Los numeros son los de /listproyecto en este chat."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado, separados por espacios.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_PROYECTOS) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        pid = cache[n - 1]
+        if pid not in vistos:
+            vistos.add(pid)
+            ids_objetivo.append(pid)
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listproyecto en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    activo = buscar_activo_global()
+    if activo and activo.id_proyecto in ids_objetivo:
+        await update.message.reply_text(
+            "Hay un tiempo activo en uno de esos proyectos. Usa /tiempofin antes de borrar."
+        )
+        return
+
+    ok_n = 0
+    no_md = 0
+    for pid in ids_objetivo:
+        proyecto = buscar_proyecto_por_id(pid)
+        if not proyecto:
+            continue
+        eliminar_todos_de_proyecto(pid)
+        removed = eliminar_proyecto_por_id(pid)
+        if not removed:
+            continue
+        path = _ruta_archivo_proyecto(removed.ruta)
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                no_md += 1
+        ok_n += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_PROYECTOS, None)
+    partes = [f"Proyectos eliminados: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_md:
+        partes.append(f"Aviso: {no_md} archivo(s) .md no se pudieron borrar.")
+    await update.message.reply_text(" ".join(partes))
+
+
+async def cmd_tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    args = list(context.args or [])
+    if not args:
+        await update.message.reply_text(
+            "Uso:\n"
+            "/tiempo <num_proyecto> — Inicia contador (solo uno activo a la vez).\n"
+            "/tiempo <num_proyecto> <minutos> — Suma tiempo manual (hoy desde 00:00).\n"
+            "Los numeros son los de /listproyecto en este chat."
+        )
+        return
+
+    if not args[0].isdigit():
+        await update.message.reply_text("El primer argumento debe ser el numero de /listproyecto.")
+        return
+    n = int(args[0])
+    p = _proyecto_desde_indice_listado(context, n)
+    if not p:
+        await update.message.reply_text(
+            "Proyecto no encontrado. Ejecuta /listproyecto en este chat primero."
+        )
+        return
+
+    if len(args) == 1:
+        activo = buscar_activo_global()
+        if activo:
+            await update.message.reply_text(
+                "Ya hay un tiempo activo. Usa /tiempofin antes de iniciar otro."
+            )
+            return
+        ahora = datetime.now()
+        tid = _generar_id_tiempo(p.id, ahora.isoformat())
+        t = Tiempo(
+            id=tid,
+            id_proyecto=p.id,
+            fecha_hora_inicio=formatear_fecha_hora(ahora),
+            fecha_hora_fin="",
+            cantidad_tiempo="",
+        )
+        añadir_tiempo(t)
+        await update.message.reply_text(
+            f"Tiempo iniciado en proyecto: {p.titulo}\n"
+            f"Inicio: {t.fecha_hora_inicio}\n"
+            f"Usa /tiempofin al terminar."
+        )
+        return
+
+    if len(args) >= 2:
+        try:
+            mins = int(args[1])
+        except ValueError:
+            await update.message.reply_text("Los minutos deben ser un numero entero.")
+            return
+        if mins < 0:
+            await update.message.reply_text("Los minutos no pueden ser negativos.")
+            return
+        if mins == 0:
+            await update.message.reply_text("Usa al menos 1 minuto o omite el segundo argumento.")
+            return
+        hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        fin = hoy + timedelta(minutes=mins)
+        tid = _generar_id_tiempo(p.id, hoy.isoformat())
+        t = Tiempo(
+            id=tid,
+            id_proyecto=p.id,
+            fecha_hora_inicio=formatear_fecha_hora(hoy),
+            fecha_hora_fin=formatear_fecha_hora(fin),
+            cantidad_tiempo=str(mins),
+        )
+        añadir_tiempo(t)
+        sincronizar_tiempo_total_proyecto(p.id)
+        await update.message.reply_text(
+            f"Tiempo manual: +{formatear_minutos_como_texto(mins)} en {p.titulo}\n"
+            f"{t.fecha_hora_inicio} → {t.fecha_hora_fin}"
+        )
+        return
+
+    await update.message.reply_text("Argumentos no reconocidos. Usa /ayuda.")
+
+
+async def cmd_tiempofin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    activo = buscar_activo_global()
+    if not activo:
+        await update.message.reply_text("No hay ningun tiempo activo.")
+        return
+    fin = datetime.now()
+    ok = cerrar_tiempo(activo, fin)
+    if not ok:
+        await update.message.reply_text("No se pudo cerrar el tiempo (fecha inicio invalida).")
+        return
+    p = buscar_proyecto_por_id(activo.id_proyecto)
+    tit = p.titulo if p else activo.id_proyecto
+    try:
+        mins = int((activo.cantidad_tiempo or "0").strip() or 0)
+    except ValueError:
+        mins = 0
+    await update.message.reply_text(
+        f"Tiempo cerrado en: {tit}\n"
+        f"Fin: {activo.fecha_hora_fin}\n"
+        f"Duracion: {formatear_minutos_como_texto(mins)}\n"
+        f"Total proyecto: {formatear_minutos_como_texto(tiempo_total_minutos(p) if p else mins)}"
+    )
+
+
+async def cmd_modtiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    args = list(context.args or [])
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Uso: /modtiempo <num_tiempo> <fecha y hora fin>\n"
+            "Ejemplo: /modtiempo 3 20,03,2026 18:45\n"
+            "El numero es el de /listtiempo en este chat."
+        )
+        return
+    if not args[0].isdigit():
+        await update.message.reply_text("El primer argumento debe ser el numero de /listtiempo.")
+        return
+    n = int(args[0])
+    resto = " ".join(args[1:]).strip()
+    fin = parsear_fecha_hora(resto)
+    if fin is None:
+        await update.message.reply_text(
+            "Fecha/hora fin no reconocida. Usa DD,MM,YYYY HH:MM (o variaciones con - / /)."
+        )
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_TIEMPOS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text(
+            "Indice invalido. Ejecuta /listtiempo en este chat primero."
+        )
+        return
+    t = buscar_tiempo_por_id(cache[n - 1])
+    if not t:
+        await update.message.reply_text("Registro de tiempo no encontrado.")
+        return
+    ini = parsear_fecha_hora(t.fecha_hora_inicio)
+    if ini is None:
+        await update.message.reply_text("No se pudo leer la fecha de inicio guardada.")
+        return
+    if fin < ini:
+        await update.message.reply_text("La hora fin debe ser posterior al inicio.")
+        return
+    ok = cerrar_tiempo(t, fin)
+    if not ok:
+        await update.message.reply_text("No se pudo actualizar el registro.")
+        return
+    p = buscar_proyecto_por_id(t.id_proyecto)
+    await update.message.reply_text(
+        f"Tiempo actualizado.\n"
+        f"Nueva fin: {t.fecha_hora_fin}\n"
+        f"Duracion: {formatear_minutos_como_texto(int(t.cantidad_tiempo or 0))}\n"
+        f"Total proyecto: {formatear_minutos_como_texto(tiempo_total_minutos(p) if p else 0)}"
+    )
+
+
+async def cmd_listtiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    todos = leer_tiempos()
+    if not todos:
+        await update.message.reply_text("No hay registros en tiempos.csv.")
+        return
+    ordenados = _ordenar_tiempos_recientes(todos)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_TIEMPOS] = [t.id for t in ordenados]
+
+    lineas: list[str] = []
+    for i, t in enumerate(ordenados, 1):
+        p = buscar_proyecto_por_id(t.id_proyecto)
+        tit = (p.titulo if p else t.id_proyecto)[:TIEMPO_RESUMEN_LISTA_MAX]
+        suf = " (activo)" if es_activo(t) else ""
+        dur = (
+            formatear_minutos_como_texto(int(t.cantidad_tiempo or 0))
+            if not es_activo(t)
+            else "..."
+        )
+        lineas.append(
+            f"{i}. {tit}{suf} | {t.fecha_hora_inicio} | {dur}"
+        )
+    texto = f"Tiempos ({len(ordenados)}), mas recientes primero:\n\n" + "\n".join(lineas)
+    if len(texto) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto)
+    else:
+        await update.message.reply_text(texto[:MAX_TELEGRAM_MSG])
+        await update.message.reply_text(texto[MAX_TELEGRAM_MSG:])
+
+
+async def cmd_vertiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /vertiempo <numero>\nEl numero es el de /listtiempo en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    t: Tiempo | None = None
+    if arg.isdigit():
+        cache = (context.chat_data or {}).get(CACHE_RM_TIEMPOS) or []
+        n = int(arg)
+        if n < 1 or n > len(cache):
+            await update.message.reply_text(
+                "Indice invalido. Ejecuta /listtiempo en este chat primero."
+            )
+            return
+        t = buscar_tiempo_por_id(cache[n - 1])
+    else:
+        t = buscar_tiempo_por_id(arg)
+    if not t:
+        await update.message.reply_text("No se encontro ese registro.")
+        return
+    p = buscar_proyecto_por_id(t.id_proyecto)
+    tit = p.titulo if p else t.id_proyecto
+    fin_txt = t.fecha_hora_fin.strip() or "(activo)"
+    cant = t.cantidad_tiempo.strip() or ("—" if es_activo(t) else "0")
+    body = (
+        f"Proyecto: {tit}\n"
+        f"ID tiempo: {t.id}\n"
+        f"Inicio: {t.fecha_hora_inicio}\n"
+        f"Fin: {fin_txt}\n"
+        f"Minutos: {cant}\n"
+    )
+    if not es_activo(t):
+        try:
+            m = int(cant)
+            body += f"Texto: {formatear_minutos_como_texto(m)}\n"
+        except ValueError:
+            pass
+    await update.message.reply_text(body)
 
 
 def _generar_id_func(texto: str) -> str:
@@ -1931,6 +2615,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
+    if await _manejar_wizard_proyecto(update, context):
+        return
     texto = update.message.text or ""
     url = _extraer_url(texto)
     if url:
@@ -2182,6 +2868,16 @@ def main() -> None:
     app.add_handler(CommandHandler("listideas", cmd_listideas))
     app.add_handler(CommandHandler("veridea", cmd_veridea))
     app.add_handler(CommandHandler("rmidea", cmd_rmidea))
+    app.add_handler(CommandHandler("proyecto", cmd_proyecto))
+    app.add_handler(CommandHandler("cancelarproyecto", cmd_cancelarproyecto))
+    app.add_handler(CommandHandler("listproyecto", cmd_listproyecto))
+    app.add_handler(CommandHandler("verproyecto", cmd_verproyecto))
+    app.add_handler(CommandHandler("rmproyecto", cmd_rmproyecto))
+    app.add_handler(CommandHandler("tiempo", cmd_tiempo))
+    app.add_handler(CommandHandler("tiempofin", cmd_tiempofin))
+    app.add_handler(CommandHandler("listtiempo", cmd_listtiempo))
+    app.add_handler(CommandHandler("vertiempo", cmd_vertiempo))
+    app.add_handler(CommandHandler("modtiempo", cmd_modtiempo))
     app.add_handler(CommandHandler("listconvo", cmd_listar))
     app.add_handler(CommandHandler("verconvo", cmd_verconvo))
     app.add_handler(CommandHandler("func", cmd_func))
