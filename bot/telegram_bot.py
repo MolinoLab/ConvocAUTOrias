@@ -1,8 +1,9 @@
 """
 Bot Telegram que recibe URLs y comandos.
 Comandos: /sube <url>, /idea <texto>, /listar, /list, /ver <id|num>, /revisar <id>,
-          /func <texto> <prioridad> [estado], /listfunc,
-          /tarea "titulo" [fecha] ["desc"], /evento <nombre> <fecha> [hora], /listtareas, /ayuda.
+          /func <texto> [prioridad] [estado], /listfunc,
+          /tarea, /comprar, /huevos, /listhuevos,
+          /evento <nombre> <fecha> [hora], /listtareas, /ayuda.
 URL enviada sin comando se interpreta como nueva convocatoria.
 """
 import hashlib
@@ -29,11 +30,10 @@ from src.db_funcionalidad import (
     ESTADOS_VALIDOS,
     añadir as añadir_func,
     listar as listar_func,
-    buscar_por_id as buscar_func_por_id,
-    actualizar as actualizar_func,
 )
 from src.caldav_client import crear_evento, listar_tareas, obtener_ultimo_error_evento
 from src.deck_client import crear_tarea_deck, obtener_ultimo_error_deck
+from src.db_huevos import añadir as añadir_huevo, resumen_ultimos_dias_desde_hoy
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 
@@ -44,6 +44,9 @@ URL_PATTERN = re.compile(
 )
 
 _WHISPER_MODEL = None
+
+# Stack Deck para lista de compras (nombre exacto en Nextcloud Deck)
+DECK_STACK_COMPRAR = "Comprar"
 
 
 def _esta_autorizado(update: Update) -> bool:
@@ -203,7 +206,7 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
-_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea", "evento"}
+_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea", "evento", "comprar"}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -231,21 +234,27 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Comandos disponibles:\n"
         "/sube <url> - Sube una convocatoria por URL\n"
         "/idea <texto> - Guarda una idea en data/ideas y data/ideas.csv\n"
-        "/func <texto> <prioridad 1-5> [estado] - Registra una funcionalidad pendiente\n"
+        "/func <texto> [prioridad 1-5] [estado] - Funcionalidad (prioridad 3 por defecto)\n"
         "/listfunc - Lista funcionalidades ordenadas por prioridad\n"
-        '/tarea "Titulo" [YYYY-MM-DD] ["Descripcion"] - Crea tarjeta en Nextcloud Deck\n'
-        "/evento <nombre> <fecha> [HH:MM] - Crea evento en calendario CalDAV "
-        "(fecha: DD/MM/YY, 20/3, solo dia 1-31 en mes actual; hora opcional, 1 h duracion)\n"
+        '/tarea "Titulo" [fecha] ["Descripcion"] - Tarjeta en Nextcloud Deck (columna por defecto)\n'
+        f'/comprar "Titulo" [fecha] ["Descripcion"] - Igual que /tarea en columna "{DECK_STACK_COMPRAR}"\n'
+        "/huevos <cantidad> - Registra huevos del dia en data/huevos.csv\n"
+        "/listhuevos [dias] - Resumen por dia (6 dias por defecto, desde hoy hacia atras)\n"
+        "/evento <nombre> <fecha> [HH:MM] - Evento en CalDAV "
+        "(fecha española: DD-MM-AAAA, DD-MM, DD; hora opcional, 1 h duracion)\n"
         "/listtareas - Lista tareas del calendario CalDAV por prioridad\n"
         "/listar o /list - Lista convocatorias futuras por proximidad\n"
         "/ver <id o numero> - Ver toda la info de una convocatoria\n"
         "/revisar <id> - Marca una convocatoria como procesada\n"
         "/ayuda - Muestra esta ayuda\n\n"
+        "Fechas (tarea/evento): formato español DD-MM-AAAA; DD-MM = año actual; "
+        "solo DD = mes y año actuales. Tambien se acepta YYYY-MM-DD en tareas.\n\n"
         "Tambien puedes enviar una URL directamente para subirla.\n\n"
         "Audio: la primera palabra determina la accion:\n"
         "  idea <descripcion> - Guarda una idea\n"
-        "  funcionalidad <descripcion> - Registra funcionalidad (P3, pendiente)\n"
-        "  tarea <titulo> [YYYY-MM-DD] - Crea tarjeta en Deck (fecha opcional)\n"
+        "  funcionalidad <descripcion> [prioridad 1-5] - Registra funcionalidad\n"
+        "  tarea <titulo> [fecha] - Crea tarjeta en Deck\n"
+        f'  comprar <titulo> [fecha] - Tarjeta en columna "{DECK_STACK_COMPRAR}"\n'
         "  evento <nombre> <fecha> [HH:MM] - Crea evento en calendario\n"
         "  Si no se reconoce accion, se guarda como idea."
     )
@@ -420,6 +429,29 @@ def _generar_id_func(texto: str) -> str:
 _PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
 
 
+def _parsear_funcionalidad_audio(contenido: str) -> tuple[str, int]:
+    """
+    Separa texto y prioridad opcional al final (1-5): '... prioridad 4' o '... 4'.
+    Por defecto prioridad 3.
+    """
+    texto = " ".join(contenido.split()).strip()
+    prioridad = 3
+    if not texto:
+        return "", prioridad
+
+    m = re.search(r"\bprioridad\s+([1-5])\s*$", texto, re.IGNORECASE)
+    if m:
+        texto = texto[: m.start()].strip()
+        prioridad = int(m.group(1))
+    else:
+        m2 = re.search(r"\s+([1-5])\s*$", texto)
+        if m2:
+            texto = texto[: m2.start()].strip()
+            prioridad = int(m2.group(1))
+
+    return texto.strip(), prioridad
+
+
 async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -427,11 +459,12 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await update.message.reply_text(
-            "Uso: /func <texto> <prioridad 1-5> [estado]\n"
-            "Ejemplo: /func mejorar parser del scraper 4 pendiente\n\n"
+            "Uso: /func <texto> [prioridad 1-5] [estado]\n"
+            "Ejemplo: /func mejorar parser del scraper 4 pendiente\n"
+            "Sin prioridad se usa 3 por defecto.\n\n"
             "Estados validos: pendiente, en_progreso, hecha\n"
             "Si no indicas estado, se asume 'pendiente'.\n"
-            "La prioridad (1-5) debe ser el penultimo o ultimo argumento numerico."
+            "La prioridad (1-5), si la pones, suele ser el ultimo numero."
         )
         return
 
@@ -451,11 +484,7 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
 
     if prioridad is None:
-        await update.message.reply_text(
-            "Falta la prioridad (1-5).\n"
-            "Uso: /func <texto> <prioridad> [estado]"
-        )
-        return
+        prioridad = 3
 
     texto = " ".join(args).strip()
     if not texto:
@@ -512,33 +541,6 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(texto_completo[MAX_MSG:])
 
 
-def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
-    """Parsea: "Titulo" [YYYY-MM-DD] ["Descripcion"]
-
-    Sin comillas, todo el texto (excepto una posible fecha) se trata como titulo.
-    """
-    texto = texto_raw.strip()
-    if not texto:
-        return "", None, ""
-
-    fecha = None
-    date_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", texto)
-    if date_match:
-        fecha = date_match.group(1)
-        texto = (texto[:date_match.start()] + texto[date_match.end():]).strip()
-
-    partes_quoted = re.findall(r'"([^"]*)"', texto)
-
-    if partes_quoted:
-        titulo = partes_quoted[0]
-        descripcion = partes_quoted[1] if len(partes_quoted) > 1 else ""
-    else:
-        titulo = texto
-        descripcion = ""
-
-    return titulo.strip(), fecha, descripcion.strip()
-
-
 def _fecha_evento_ddmmyyyy_a_iso(fecha_dd_mm_yyyy: str) -> str | None:
     """Valida DD-MM-YYYY y devuelve YYYY-MM-DD para CalDAV; None si la fecha no es valida."""
     try:
@@ -548,6 +550,35 @@ def _fecha_evento_ddmmyyyy_a_iso(fecha_dd_mm_yyyy: str) -> str | None:
         return None
 
 
+def _extraer_fecha_iso_y_resto(texto: str) -> tuple[str | None, str]:
+    """
+    Extrae una fecha y devuelve (YYYY-MM-DD, texto_sin_fecha).
+    Prioridad: formato español día-mes-año (ver _extraer_fecha_formato_espanol);
+    si no hay, acepta legado YYYY-MM-DD.
+    """
+    texto = texto.strip()
+    if not texto:
+        return None, texto
+
+    fecha_dmY, resto = _extraer_fecha_formato_espanol(texto)
+    if fecha_dmY:
+        iso = _fecha_evento_ddmmyyyy_a_iso(fecha_dmY)
+        if iso:
+            return iso, resto
+
+    m = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", texto)
+    if m:
+        iso = m.group(1)
+        try:
+            datetime.strptime(iso, "%Y-%m-%d")
+        except ValueError:
+            return None, texto
+        resto = (texto[: m.start()] + texto[m.end() :]).strip()
+        return iso, resto
+
+    return None, texto
+
+
 def _anio_evento_dos_cifras(y: int) -> int:
     """26 -> 2026; 99 -> 2099."""
     if 0 <= y < 100:
@@ -555,11 +586,13 @@ def _anio_evento_dos_cifras(y: int) -> int:
     return y
 
 
-def _extraer_fecha_evento_flexible(texto: str) -> tuple[str | None, str]:
+def _extraer_fecha_formato_espanol(texto: str) -> tuple[str | None, str]:
     """
-    Extrae fecha como DD-MM-YYYY (normalizada) y devuelve el texto sin ese fragmento.
-    Orden día-mes-año; separadores / o -; año de 2 cifras se completa con 20xx.
-    Sin año: D/M o D-M usa el año en curso. Solo un número 1-31: día en mes y año actuales.
+    Formato español día-mes-año: devuelve fecha normalizada DD-MM-YYYY y el texto sin ese fragmento.
+    - DD-MM-YYYY o DD/MM/YYYY (año 2 cifras -> 20YY)
+    - DD-MM o DD/MM sin año -> año actual
+    - Solo DD (1-31) si hay un único candidato en el texto -> mes y año actuales
+    Separadores / o -.
     """
     now = datetime.now()
     sep = r"[/-]"
@@ -610,6 +643,34 @@ def _extraer_fecha_evento_flexible(texto: str) -> tuple[str | None, str]:
     return None, texto
 
 
+# Alias retrocompatible
+def _extraer_fecha_evento_flexible(texto: str) -> tuple[str | None, str]:
+    return _extraer_fecha_formato_espanol(texto)
+
+
+def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
+    """Parsea: \"Titulo\" [fecha DD-MM-AAAA, DD-MM, DD o legado YYYY-MM-DD] [\"Descripcion\"].
+
+    Sin comillas, todo el texto (excepto una posible fecha) se trata como titulo.
+    """
+    texto = texto_raw.strip()
+    if not texto:
+        return "", None, ""
+
+    fecha, texto = _extraer_fecha_iso_y_resto(texto)
+
+    partes_quoted = re.findall(r'"([^"]*)"', texto)
+
+    if partes_quoted:
+        titulo = partes_quoted[0]
+        descripcion = partes_quoted[1] if len(partes_quoted) > 1 else ""
+    else:
+        titulo = texto
+        descripcion = ""
+
+    return titulo.strip(), fecha, descripcion.strip()
+
+
 def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
     """Parsea nombre del evento, fecha flexible (DD/MM/YY, etc.) y hora opcional HH:MM."""
     texto = texto_raw.strip()
@@ -624,7 +685,7 @@ def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
         hora = None
         texto_sin_hora = texto
 
-    fecha, titulo_raw = _extraer_fecha_evento_flexible(texto_sin_hora)
+    fecha, titulo_raw = _extraer_fecha_formato_espanol(texto_sin_hora)
 
     partes_quoted = re.findall(r'"([^"]*)"', titulo_raw)
     if partes_quoted:
@@ -635,25 +696,14 @@ def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
     return titulo.strip(), fecha, hora
 
 
-async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _esta_autorizado(update):
-        await _rechazar_no_autorizado(update)
-        return
-
-    texto_raw = (update.message.text or "").strip()
-    if texto_raw.startswith("/tarea"):
-        texto_raw = texto_raw[len("/tarea"):].strip()
-
-    if not texto_raw:
-        await update.message.reply_text(
-            'Uso: /tarea "Titulo" [YYYY-MM-DD] ["Descripcion"]\n'
-            'Ejemplo: /tarea "Comprar material" 2026-03-25 "Para laboratorio"\n'
-            "La fecha y descripcion son opcionales."
-        )
-        return
-
+async def _ejecutar_creacion_tarea_deck(
+    update: Update,
+    texto_raw: str,
+    *,
+    stack_name: str | None = None,
+    prefijo_exito: str = "Tarea creada",
+) -> None:
     titulo, fecha, descripcion = _parsear_args_tarea(texto_raw)
-
     if not titulo:
         await update.message.reply_text("El titulo de la tarea no puede estar vacio.")
         return
@@ -663,15 +713,24 @@ async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             datetime.strptime(fecha, "%Y-%m-%d")
         except ValueError:
             await update.message.reply_text(
-                f"Fecha invalida: {fecha}\nUsa formato YYYY-MM-DD (ej. 2026-03-25)"
+                f"Fecha invalida: {fecha}\n"
+                "Usa DD-MM-AAAA, DD-MM, solo DD (mes actual) o YYYY-MM-DD."
             )
             return
 
     msg = await update.message.reply_text("Creando tarea en Deck...")
-    ok = crear_tarea_deck(titulo, descripcion=descripcion, fecha_due=fecha)
+    ok = crear_tarea_deck(
+        titulo,
+        descripcion=descripcion,
+        fecha_due=fecha,
+        stack_name=stack_name,
+    )
 
     if ok:
-        partes = [f"Tarea creada en Deck ({config.DECK_BOARD_NAME}): {titulo}"]
+        stack_info = f" [{stack_name}]" if stack_name else ""
+        partes = [
+            f"{prefijo_exito} en Deck ({config.DECK_BOARD_NAME}){stack_info}: {titulo}"
+        ]
         if fecha:
             partes.append(f"Fecha limite: {fecha}")
         if descripcion:
@@ -683,6 +742,57 @@ async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "No se pudo crear la tarea en Deck.\n"
             f"{deck_error or 'sin detalle'}"
         )
+
+
+async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/tarea"):
+        texto_raw = texto_raw[len("/tarea") :].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            'Uso: /tarea "Titulo" [DD-MM-AAAA | DD-MM | DD | YYYY-MM-DD] ["Descripcion"]\n'
+            'Ejemplo: /tarea "Comprar material" 25-03-2026 "Para laboratorio"\n'
+            "Formato español: dia-mes-año; sin año = año actual; solo dia = mes actual.\n"
+            "La fecha y descripcion son opcionales."
+        )
+        return
+
+    await _ejecutar_creacion_tarea_deck(
+        update,
+        texto_raw,
+        stack_name=None,
+        prefijo_exito="Tarea creada",
+    )
+
+
+async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/comprar"):
+        texto_raw = texto_raw[len("/comprar") :].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            f'Uso: /comprar "Titulo" [fecha] ["Descripcion"] — igual que /tarea pero en la '
+            f'columna "{DECK_STACK_COMPRAR}".\n'
+            "Fecha: DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD (opcional)."
+        )
+        return
+
+    await _ejecutar_creacion_tarea_deck(
+        update,
+        texto_raw,
+        stack_name=DECK_STACK_COMPRAR,
+        prefijo_exito="Compra anotada",
+    )
 
 
 async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -697,9 +807,9 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not texto_raw:
         await update.message.reply_text(
             "Uso: /evento <nombre> <fecha> [HH:MM]\n"
-            "Fecha: DD-MM-AAAA o DD/MM/AAAA; año de 2 cifras (26 -> 2026); "
-            "DD/MM o DD-MM sin año = año actual; un solo numero 1-31 = dia del mes actual.\n"
-            "Separadores / o -. Ejemplo: /evento Reunion 20/3/26 14:30"
+            "Fecha (español, dia-mes): DD-MM-AAAA o DD/MM/AAAA; año 2 cifras -> 20YY; "
+            "DD-MM sin año = año actual; solo DD (1-31, unico en el texto) = mes y año actuales.\n"
+            "Separadores / o -. Ejemplo: /evento Reunion 20-03-26 14:30"
         )
         return
 
@@ -710,7 +820,7 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if not fecha_ev:
         await update.message.reply_text(
-            "Falta una fecha reconocible (ej. 20-03-2026, 20/3/26, 20/3, o solo el dia 15 en el mes actual)."
+            "Falta una fecha reconocible (ej. 20-03-2026, 20-03, 20/3/26, o solo el dia 15 si es el unico numero 1-31)."
         )
         return
 
@@ -786,6 +896,66 @@ async def cmd_listtareas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await msg.edit_text(texto_completo[:MAX_MSG])
         await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Uso: /huevos <cantidad>\nEjemplo: /huevos 12")
+        return
+    try:
+        cantidad = int(context.args[0].strip())
+    except ValueError:
+        await update.message.reply_text("La cantidad debe ser un numero entero.")
+        return
+    if cantidad <= 0:
+        await update.message.reply_text("La cantidad debe ser mayor que cero.")
+        return
+
+    hoy = datetime.now().strftime("%Y-%m-%d")
+    reg = añadir_huevo(cantidad, hoy, fuente="telegram")
+    await update.message.reply_text(
+        f"Registro de huevos guardado.\n"
+        f"Fecha: {hoy}\n"
+        f"Cantidad: {cantidad}\n"
+        f"ID: {reg.id}"
+    )
+
+
+async def cmd_listhuevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    dias = 6
+    if context.args:
+        if len(context.args) > 1 or not context.args[0].strip().isdigit():
+            await update.message.reply_text(
+                "Uso: /listhuevos [dias]\n"
+                "Sin argumento muestra 6 dias hacia atras desde hoy.\n"
+                "Ejemplo: /listhuevos 10"
+            )
+            return
+        dias = int(context.args[0].strip())
+        if dias < 1 or dias > 366:
+            await update.message.reply_text("El numero de dias debe estar entre 1 y 366.")
+            return
+
+    filas = resumen_ultimos_dias_desde_hoy(dias)
+    lineas: list[str] = []
+    for fecha_iso, total in filas:
+        try:
+            d = datetime.strptime(fecha_iso, "%Y-%m-%d")
+            etiqueta = d.strftime("%d-%m-%Y")
+        except ValueError:
+            etiqueta = fecha_iso
+        lineas.append(f"{etiqueta}: {total}")
+
+    cabecera = f"Huevos (ultimos {dias} dias, desde hoy hacia atras):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+    await update.message.reply_text(texto_completo)
 
 
 async def cmd_revisar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -917,10 +1087,16 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "La funcionalidad no puede estar vacia. Di: funcionalidad <descripcion>"
                 )
                 return
+            texto_func, pri_func = _parsear_funcionalidad_audio(contenido)
+            if not texto_func:
+                await estado.edit_text(
+                    "La funcionalidad no puede estar vacia tras quitar la prioridad."
+                )
+                return
             func = Funcionalidad(
-                id=_generar_id_func(contenido),
-                texto=contenido,
-                prioridad=3,
+                id=_generar_id_func(texto_func),
+                texto=texto_func,
+                prioridad=pri_func,
                 estado="pendiente",
                 fecha_ingesta=datetime.now().isoformat(),
                 fuente="telegram_audio",
@@ -939,7 +1115,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             titulo_t, fecha_t, descripcion_t = _parsear_args_tarea(contenido)
             if not titulo_t:
                 await estado.edit_text(
-                    "La tarea no puede estar vacia. Di: tarea <titulo> [fecha YYYY-MM-DD]"
+                    "La tarea no puede estar vacia. Di: tarea <titulo> [fecha DD-MM-AAAA, DD-MM o DD]"
                 )
                 return
             if fecha_t:
@@ -947,7 +1123,8 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     datetime.strptime(fecha_t, "%Y-%m-%d")
                 except ValueError:
                     await estado.edit_text(
-                        f"Fecha invalida en audio: {fecha_t}\nUsa YYYY-MM-DD"
+                        f"Fecha invalida en audio: {fecha_t}\n"
+                        "Usa DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
                     )
                     return
             ok = crear_tarea_deck(
@@ -968,12 +1145,50 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"{deck_error or 'sin detalle'}"
                 )
 
+        elif accion == "comprar":
+            titulo_c, fecha_c, descripcion_c = _parsear_args_tarea(contenido)
+            if not titulo_c:
+                await estado.edit_text(
+                    f'La compra no puede estar vacia. Di: comprar <titulo> [fecha]\n'
+                    f'(columna Deck "{DECK_STACK_COMPRAR}")'
+                )
+                return
+            if fecha_c:
+                try:
+                    datetime.strptime(fecha_c, "%Y-%m-%d")
+                except ValueError:
+                    await estado.edit_text(
+                        f"Fecha invalida en audio: {fecha_c}\n"
+                        "Usa DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
+                    )
+                    return
+            ok = crear_tarea_deck(
+                titulo_c,
+                descripcion=descripcion_c,
+                fecha_due=fecha_c,
+                stack_name=DECK_STACK_COMPRAR,
+            )
+            if ok:
+                lineas = [
+                    f'Compra anotada en Deck ({config.DECK_BOARD_NAME}) [{DECK_STACK_COMPRAR}] desde audio.',
+                    f"Titulo: {titulo_c}",
+                ]
+                if fecha_c:
+                    lineas.append(f"Fecha limite: {fecha_c}")
+                await estado.edit_text("\n".join(lineas))
+            else:
+                deck_error = obtener_ultimo_error_deck()
+                await estado.edit_text(
+                    "No se pudo crear la tarjeta de compra en Deck desde audio.\n"
+                    f"{deck_error or 'sin detalle'}"
+                )
+
         elif accion == "evento":
             nombre_ev, fecha_ev, hora_ev = _parsear_args_evento(contenido)
             if not fecha_ev:
                 await estado.edit_text(
-                    "El evento necesita una fecha (ej. 20/3/26, 20-03-2026, 20/3, o solo el dia).\n"
-                    "Opcional HH:MM. Ejemplo: evento reunion 20/3 15:30"
+                    "El evento necesita una fecha española (ej. 20-03-26, 20-03-2026, 20-03, o solo el dia).\n"
+                    "Opcional HH:MM. Ejemplo: evento reunion 20-03 15:30"
                 )
                 return
             if not nombre_ev:
@@ -1061,8 +1276,11 @@ def main() -> None:
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
+    app.add_handler(CommandHandler("comprar", cmd_comprar))
     app.add_handler(CommandHandler("evento", cmd_evento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))
+    app.add_handler(CommandHandler("huevos", cmd_huevos))
+    app.add_handler(CommandHandler("listhuevos", cmd_listhuevos))
     app.add_handler(CommandHandler("revisar", cmd_revisar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
