@@ -1,13 +1,18 @@
 id,texto,prioridad,estado,fecha_ingesta,fuente
 2903c24d0459a7de,"que cuando le pida, cuando fue la última vez que compré comida para los pollo, pedí comida para los perros, pueda revisar en el calendario y me diga cuánto tiempo ha pasado.",3,pendiente,2026-03-20T00:21:22.296070,telegram_audio
 60251ebb659e0ed9,que yo pueda enviar órdenes en plan listar ideas o X sin tener lo que escribir que pueda ser por audio.,3,pendiente,2026-03-20T00:23:26.831507,telegram_audio
-0f1c1bc12488a65c,a no ser que se vía lo contrario las tareas se asignan a bitDreamer.,3,pendiente,2026-03-19T23:36:11.951200,telegram_audio
-cb9a66f05689b317,"añadir una funcionalidad que sea hacer consultas, utilizando hoy a más, llamando a alguno de los modelos para que lo investigue. Esa investigación te la puede volver luego, pero puede guardar un registro también. Funcionalidad busca, funcionalidad investiga, funcionalidad...",3,pendiente,2026-03-19T23:37:34.753890,telegram_audio
 3b967eaa4bbd3d45,"poder añadir una palabra como hoy a una tarea, es decir, tarea hoy o tarea mañana, lo que serían asignarme la amie y ponerle de fecha el día siguiente.",3,pendiente,2026-03-19T23:51:11.065015,telegram_audio
 df928cd9cadb8755,"integrar las notas, las ideas, la habitácora, el diario, con el vault de obsidian.",3,pendiente,2026-03-20T00:13:14.675393,telegram_audio
 8bcaf2c9b5d71681,"programación automática, todas estas nuevas funcionalidades, que puedan ser leídas por un modelo de ella codificador y que vayáis arruinándolas, que creer versiones y solo haya que comprobarlas y tuplicarlas.",3,pendiente,2026-03-20T07:41:37.262058,telegram_audio
 63bba95b60e8d1dc,recordar dándole una hora que la hace una notificación andre y investigar si se puede enviar notificaciones a otro.,3,pendiente,2026-03-20T07:42:37.805427,telegram_audio
 586f23c7601ef71d,"se podría correr cursor en Linux, en el UPS y que fuera haciendo estos trabajos.",3,pendiente,2026-03-20T08:04:59.709116,telegram_audio
 ae70b5afcc42a84f,Quiero que puedan llegar a vizos de recordatorios al chat de Telegram. Se podrá hacer eso.,3,pendiente,2026-03-20T10:11:11.523260,telegram_audio
-44530317079497ff,"las tareas se pueden asignar por defecto al propio usuario, hacer una correlación entre usuario de telegram y usuario de nextcloud",3,pendiente,2026-03-20T11:12:11.533037,telegram
 93fe7799b92c0faf,"versión del telegram y de la aplicación, que salgan la ayuda. Prioridad 5.",3,pendiente,2026-03-20T15:18:23.416943,telegram_audio
+2848a2d9dcff82bd,revisar la RAM del equipo y cómo optimizarla un poco.,3,pendiente,2026-03-21T10:12:15.700699,telegram_audio
+e5c0d74052f0af7e,"Gestión de facturas, PDFs, imágenes, a las que se le pueden enviar, cualquiera de estos recibas, que automáticamente saque ciertas difras y creé un contabilidad.co.su con toda esa información. Vas a ser imponible, de que no factura y erras.",3,pendiente,2026-03-21T10:12:50.164511,telegram_audio
+51dfd6d70ab3f085,"podría controlar este bot mi impresora Bambulab, .",1,pendiente,2026-03-21T10:13:20.957084,telegram_audio
+fc920a4bd1b9ef49,poder añadir notas del diario antiguo.,3,pendiente,2026-03-21T10:13:51.658581,telegram_audio
+a91b78c6da8a1914,Quitar el para él en los textos.,3,pendiente,2026-03-21T10:16:24.615068,telegram_audio
+75a8c529ce0c5716,"Resolver el tema de día, mes en audio. .",5,pendiente,2026-03-21T10:19:51.756297,telegram_audio
+7c05947a79a4a7e7,"recordar, crea un recordatorio para más adelante con el tiempo que sea necesario. Por ejemplo, recordar mañana que tengo que salir a pasear el perro. .",2,pendiente,2026-03-21T15:26:07.278220,telegram_audio
+1cf73d8ee965d986,"Creo que no están funcionando correctamente los flujos de investigación, ni los envíos de mensajes con el resumen de las tareas del día. Revizar que esté funcionando bien y crear nuevos recordatorios, nuevos envíos de mensajes al telegram, el domingo por la noche con toda la información de la semana, y crear una función que sea... ¿Qué hay hoy? Que me devuelva toda la información o update, que me devuelva toda la información de la semana en curso, o de aquí a una semana.",4,pendiente,2026-03-21T15:27:41.882443,telegram_audio
