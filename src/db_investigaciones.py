@@ -21,6 +21,7 @@ CAMPOS_INVESTIGACION = [
     "concepto",
     "resumen",
     "link",
+    "archivo",
 ]
 
 ESTADOS_INVESTIGACION = {"pendiente", "investigado", "enviado"}
@@ -34,6 +35,7 @@ class Investigacion:
     concepto: str
     resumen: str
     link: str
+    archivo: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -43,6 +45,7 @@ class Investigacion:
             "concepto": self.concepto,
             "resumen": self.resumen,
             "link": self.link,
+            "archivo": self.archivo,
         }
 
 
@@ -54,6 +57,7 @@ def _fila_a_investigacion(fila: dict[str, str]) -> Investigacion:
         concepto=fila.get("concepto", ""),
         resumen=fila.get("resumen", ""),
         link=fila.get("link", ""),
+        archivo=(fila.get("archivo") or "").strip(),
     )
 
 

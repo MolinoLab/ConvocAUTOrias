@@ -1,6 +1,6 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
-ideas, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
+ideas, memorias, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
 tareas Deck, eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
@@ -28,6 +28,13 @@ from src.db_ideas import (
     buscar_por_id as buscar_idea_por_id,
     eliminar_por_id as eliminar_idea_por_id,
     leer_ideas,
+)
+from src.db_memorias import (
+    Memoria,
+    añadir_memoria,
+    buscar_por_id as buscar_memoria_por_id,
+    eliminar_por_id as eliminar_memoria_por_id,
+    leer_memorias,
 )
 from src.db_funcionalidad import (
     Funcionalidad,
@@ -156,6 +163,7 @@ CACHE_RM_ENLACES = "rm_enlace_ids"
 CACHE_RM_PROYECTOS = "rm_proyecto_ids"
 CACHE_RM_TIEMPOS = "rm_tiempo_ids"
 CACHE_RM_INVESTIGACIONES = "rm_investigacion_ids"
+CACHE_RM_MEMORIAS = "rm_memoria_ids"
 CACHE_RM_PENDIENTES_IDS = "rm_pendiente_ids"
 CACHE_RM_CONTABILIDAD_IDS = "rm_contabilidad_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
@@ -167,9 +175,19 @@ FUNC_RESUMEN_MAX = 80
 INV_RESUMEN_LISTA_MAX = 72
 PENDIENTE_RESUMEN_LISTA_MAX = 72
 _TIPOS_MV_VALIDOS = frozenset(
-    {"idea", "tarea", "evento", "funcionalidad", "investiga", "comprar", "diario"}
+    {
+        "idea",
+        "memoria",
+        "tarea",
+        "evento",
+        "funcionalidad",
+        "investiga",
+        "comprar",
+        "diario",
+    }
 )
 IDEA_RESUMEN_LISTA_MAX = 70
+MEMORIA_RESUMEN_LISTA_MAX = 70
 ENLACE_RESUMEN_LISTA_MAX = 72
 MAX_TELEGRAM_MSG = 4000
 PROYECTO_RESUMEN_LISTA_MAX = 60
@@ -243,10 +261,13 @@ async def _rechazar_no_autorizado(update: Update) -> None:
 
 
 def _deck_uids_para_update(update: Update | None) -> list[str]:
-    """Uids Nextcloud para asignar tarjetas Deck según username de Telegram."""
+    """Uids Nextcloud para asignar tarjetas Deck según id o username de Telegram."""
     if not update or not update.effective_user:
         return []
     u = update.effective_user
+    uid = config.DECK_ASSIGNEE_BY_TELEGRAM_ID.get(int(u.id))
+    if uid:
+        return [uid]
     un = (u.username or "").strip().lower()
     if not un:
         return []
@@ -353,11 +374,16 @@ Idea:
 
 
 def _guardar_idea(texto: str, fuente: str) -> Idea:
+    from src.slug_archivo_md import elegir_path_md_unico, texto_a_slug_palabras
+
     idea_id = _generar_id_idea(texto)
     metadatos = _extraer_metadatos_idea(texto)
+    resumen_meta = (metadatos.get("resumen") or "").strip()
+    slug_src = resumen_meta if resumen_meta else texto
+    slug_base = texto_a_slug_palabras(slug_src, 5)
 
     config.CARPETA_IDEAS.mkdir(parents=True, exist_ok=True)
-    ruta_abs = config.CARPETA_IDEAS / f"{idea_id}.md"
+    ruta_abs = elegir_path_md_unico(config.CARPETA_IDEAS, slug_base, idea_id)
     try:
         ruta_rel = ruta_abs.relative_to(config.DIR_PROYECTO).as_posix()
     except Exception:
@@ -399,6 +425,7 @@ def _transcribir_audio(ruta_audio: Path) -> str:
 _ACCIONES_AUDIO = frozenset(
     {
         "idea",
+        "memoria",
         "funcionalidad",
         "tarea",
         "evento",
@@ -453,6 +480,11 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listideas — Listar (recientes primero)\n"
         "/veridea <numero>\n"
         "/rmidea <num ...>\n\n"
+        "[Memorias]\n"
+        "/memoria <texto> — Guardar (resumen en CSV, desarrollo en data/memorias/)\n"
+        "/listmemorias — Listar (recientes primero)\n"
+        "/vermemoria <numero>\n"
+        "/rmmemoria <num ...>\n\n"
         "[Proyectos]\n"
         "/proyecto — Alta guiada (titulo, fechas, contacto, estado, descripcion en .md)\n"
         "/cancelarproyecto — Abortar la alta guiada\n"
@@ -504,10 +536,10 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listpendientes — Listar (recientes primero)\n"
         "/verpendiente <n|id>\n"
         "/rmpendientes <n ...>\n"
-        "/mvpendiente <n|id> <tipo> [args extra] — idea, tarea, evento, funcionalidad, "
+        "/mvpendiente <n|id> <tipo> [args extra] — idea, memoria, tarea, evento, funcionalidad, "
         "investiga, comprar, diario (func = funcionalidad)\n\n"
         "[Audio]\n"
-        "Primera palabra: idea, funcionalidad, tarea, comprar, evento, eventos, investiga, "
+        "Primera palabra: idea, memoria, funcionalidad, tarea, comprar, evento, eventos, investiga, "
         "huevos, diario. Si no coincide, se guarda en pendientes (no como idea).\n"
         "Por voz, tarea/compra/evento: usa 'para el' antes de la fecha "
         "(ej. tarea comprar pan para el 25-03). Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
@@ -894,6 +926,213 @@ async def cmd_rmidea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(" ".join(partes))
 
 
+def _generar_id_memoria(texto: str) -> str:
+    base = f"{datetime.now().isoformat()}::mem::{texto[:1000]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
+
+
+def _guardar_memoria(texto: str, fuente: str) -> Memoria:
+    from src.slug_archivo_md import elegir_path_md_unico, texto_a_slug_palabras
+
+    limpio = texto.strip()
+    mem_id = _generar_id_memoria(limpio)
+    resumen = _resumen_simple(limpio)
+    slug_base = texto_a_slug_palabras(limpio, 5)
+    config.CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
+    ruta_abs = elegir_path_md_unico(config.CARPETA_MEMORIAS, slug_base, mem_id)
+    try:
+        ruta_rel = ruta_abs.relative_to(config.DIR_PROYECTO).as_posix()
+    except Exception:
+        ruta_rel = str(ruta_abs)
+    ruta_abs.write_text(limpio + "\n", encoding="utf-8")
+    m = Memoria(
+        id=mem_id,
+        resumen=resumen,
+        ruta=ruta_rel.replace("\\", "/"),
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente=fuente,
+    )
+    añadir_memoria(m)
+    return m
+
+
+async def cmd_memoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /memoria <texto>\n"
+            "Ejemplo: /memoria apuntes API rate limits y backoff exponencial"
+        )
+        return
+    texto = " ".join(context.args).strip()
+    if not texto:
+        await update.message.reply_text("La memoria no puede estar vacia.")
+        return
+    msg = await update.message.reply_text("Guardando memoria...")
+    mem = _guardar_memoria(texto, fuente="telegram_texto")
+    await msg.edit_text(f"Memoria guardada.\nResumen: {mem.resumen}")
+
+
+def _ruta_archivo_memoria(ruta: str) -> Path:
+    return _ruta_archivo_idea(ruta)
+
+
+def _formatear_memoria_completa(mem: Memoria, cuerpo_md: str) -> str:
+    cuerpo = (cuerpo_md or "").strip()
+    if not cuerpo:
+        cuerpo = "(archivo vacio o no encontrado)"
+    return (
+        f"Resumen: {mem.resumen}\n"
+        f"Fecha: {formatear_fecha_ver(mem.fecha_ingesta)}\n"
+        f"Fuente: {mem.fuente}\n\n"
+        f"--- Contenido ---\n{cuerpo}"
+    )
+
+
+async def cmd_listmemorias(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    memorias = leer_memorias()
+    if not memorias:
+        await update.message.reply_text("No hay memorias registradas en memorias.csv.")
+        return
+    memorias = sorted(
+        memorias, key=lambda m: (m.fecha_ingesta or "", m.id), reverse=True
+    )
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_MEMORIAS] = [m.id for m in memorias]
+    lineas: list[str] = []
+    for i, mem in enumerate(memorias, 1):
+        res = mem.resumen.strip() or "(sin resumen)"
+        if len(res) > MEMORIA_RESUMEN_LISTA_MAX:
+            res = res[:MEMORIA_RESUMEN_LISTA_MAX] + "..."
+        lineas.append(f"{i}. {res}")
+    cabecera = f"Memorias ({len(memorias)}), mas recientes primero:\n\n"
+    texto_completo = cabecera + "\n\n".join(lineas)
+    if len(texto_completo) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_TELEGRAM_MSG])
+
+
+async def cmd_vermemoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /vermemoria <numero>\n"
+            "El numero es el de /listmemorias en este chat."
+        )
+        return
+    argumento = context.args[0].strip()
+    mem: Memoria | None = None
+    if argumento.isdigit():
+        n = int(argumento)
+        cache = (context.chat_data or {}).get(CACHE_RM_MEMORIAS) or []
+        if n < 1 or n > len(cache):
+            await update.message.reply_text(
+                "Indice invalido o lista antigua. Ejecuta /listmemorias primero en este chat."
+            )
+            return
+        mem = buscar_memoria_por_id(cache[n - 1])
+    else:
+        mem = buscar_memoria_por_id(argumento)
+    if not mem:
+        await update.message.reply_text(
+            "No se encontro memoria con ese criterio.\nUsa /listmemorias para ver el listado."
+        )
+        return
+    path = _ruta_archivo_memoria(mem.ruta)
+    cuerpo = ""
+    try:
+        if path.is_file():
+            cuerpo = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        cuerpo = ""
+    texto = _formatear_memoria_completa(mem, cuerpo)
+    await _reply_texto_largo(update, texto)
+
+
+async def cmd_rmmemoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmmemoria <numero> [numero ...]\n"
+            "Los numeros son los de /listmemorias en este chat."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros and enteros:
+        await update.message.reply_text(
+            "Usa solo numeros del listado separados por espacios, o un solo criterio interno."
+        )
+        return
+    ids_objetivo: list[str] = []
+    fuera: list[int] = []
+    if otros:
+        if len(otros) != 1:
+            await update.message.reply_text(
+                "Para borrar por criterio interno solo se admite un token."
+            )
+            return
+        ids_objetivo = [otros[0].strip()]
+    else:
+        cache = (context.chat_data or {}).get(CACHE_RM_MEMORIAS) or []
+        vistos: set[str] = set()
+        for n in enteros:
+            if n < 1 or n > len(cache):
+                fuera.append(n)
+                continue
+            tid = cache[n - 1]
+            if tid not in vistos:
+                vistos.add(tid)
+                ids_objetivo.append(tid)
+        if not ids_objetivo:
+            msg = "Ningun numero valido."
+            if fuera:
+                msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listmemorias en este chat."
+            await update.message.reply_text(msg)
+            return
+    ok_n = 0
+    no_encontradas = 0
+    error_indice = 0
+    archivo_no_borrado = False
+    for target_id in ids_objetivo:
+        m = buscar_memoria_por_id(target_id)
+        if not m:
+            no_encontradas += 1
+            continue
+        path = _ruta_archivo_memoria(m.ruta)
+        removed = eliminar_memoria_por_id(m.id)
+        if not removed:
+            error_indice += 1
+            continue
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                archivo_no_borrado = True
+        ok_n += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_MEMORIAS, None)
+    partes = [f"Memorias eliminadas: {ok_n}."]
+    if not otros and fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_encontradas:
+        partes.append(f"No encontradas: {no_encontradas}.")
+    if error_indice:
+        partes.append(f"Error al quitar del indice: {error_indice}.")
+    if archivo_no_borrado:
+        partes.append("Revisa la carpeta data/memorias por archivos .md huerfanos.")
+    await update.message.reply_text(" ".join(partes))
+
+
 # --- Proyectos y tiempos ---
 
 
@@ -1121,10 +1360,13 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
         return True
 
     if step == 7:
+        from src.slug_archivo_md import elegir_path_md_unico, texto_a_slug_palabras
+
         cuerpo = "" if texto_raw in ("-", "—") else texto_raw
         pid = _generar_id_proyecto(data["titulo"])
         config.CARPETA_PROYECTOS.mkdir(parents=True, exist_ok=True)
-        ruta_abs = config.CARPETA_PROYECTOS / f"{pid}.md"
+        slug_p = texto_a_slug_palabras(data["titulo"], 5)
+        ruta_abs = elegir_path_md_unico(config.CARPETA_PROYECTOS, slug_p, pid)
         try:
             ruta_rel = ruta_abs.relative_to(config.DIR_PROYECTO).as_posix()
         except Exception:
@@ -1541,6 +1783,25 @@ def _generar_id_investigacion(texto: str) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
 
+def _nueva_investigacion_pendiente(concepto: str) -> Investigacion:
+    from src.slug_archivo_md import elegir_path_md_unico, texto_a_slug_palabras
+
+    c = concepto.strip()
+    iid = _generar_id_investigacion(c)
+    slug = texto_a_slug_palabras(c, 5)
+    config.CARPETA_INVESTIGACIONES.mkdir(parents=True, exist_ok=True)
+    p = elegir_path_md_unico(config.CARPETA_INVESTIGACIONES, slug, iid)
+    return Investigacion(
+        id=iid,
+        fecha=datetime.now().isoformat(),
+        estado="pendiente",
+        concepto=c,
+        resumen="",
+        link="",
+        archivo=p.name,
+    )
+
+
 _PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
 
 
@@ -1665,28 +1926,25 @@ async def cmd_investiga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not concepto:
         await update.message.reply_text("El concepto no puede estar vacío.")
         return
-    inv = Investigacion(
-        id=_generar_id_investigacion(concepto),
-        fecha=datetime.now().isoformat(),
-        estado="pendiente",
-        concepto=concepto,
-        resumen="",
-        link="",
-    )
+    inv = _nueva_investigacion_pendiente(concepto)
     añadir_investigacion(inv)
     await update.message.reply_text(
         f"Investigación encolada (pendiente).\n"
         f"ID: {inv.id}\n"
-        f"Concepto: {inv.concepto}"
+        f"Concepto: {inv.concepto}\n"
+        f"Archivo .md previsto: {inv.archivo}"
     )
 
 
-def _ruta_md_investigacion(inv_id: str) -> Path:
-    return config.CARPETA_INVESTIGACIONES / f"{inv_id}.md"
+def _path_md_investigacion(inv: Investigacion) -> Path:
+    nombre = (inv.archivo or "").strip()
+    if nombre:
+        return config.CARPETA_INVESTIGACIONES / nombre
+    return config.CARPETA_INVESTIGACIONES / f"{inv.id}.md"
 
 
-def _leer_cuerpo_md_investigacion(inv_id: str) -> str | None:
-    p = _ruta_md_investigacion(inv_id)
+def _leer_cuerpo_md_investigacion(inv: Investigacion) -> str | None:
+    p = _path_md_investigacion(inv)
     if not p.is_file():
         return None
     try:
@@ -1704,7 +1962,7 @@ def _formatear_investigacion_completa(inv: Investigacion) -> str:
         f"Resumen: {inv.resumen or '(vacío)'}\n"
         f"Link: {inv.link or '(vacío)'}\n"
     )
-    md = _leer_cuerpo_md_investigacion(inv.id)
+    md = _leer_cuerpo_md_investigacion(inv)
     if md is None:
         return bloque_csv + "\n--- Markdown ---\n(Aún no hay archivo .md; estado pendiente o sin generar.)"
     return bloque_csv + "\n--- Markdown ---\n" + md
@@ -1819,9 +2077,14 @@ async def cmd_rminvestigacion(update: Update, context: ContextTypes.DEFAULT_TYPE
     ok_n = 0
     fallo_almacen = 0
     for iid in ids_objetivo:
+        inv_del = buscar_investigacion_por_id(iid)
         if eliminar_investigacion_db(iid):
             ok_n += 1
-            p = _ruta_md_investigacion(iid)
+            p = (
+                _path_md_investigacion(inv_del)
+                if inv_del
+                else (config.CARPETA_INVESTIGACIONES / f"{iid}.md")
+            )
             if p.is_file():
                 try:
                     p.unlink()
@@ -2880,7 +3143,7 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if len(args) < 2:
         await update.message.reply_text(
             "Uso: /mvpendiente <n|id> <tipo> [args extra]\n"
-            "tipo: idea, tarea, evento, funcionalidad (o func), investiga, comprar, diario\n"
+            "tipo: idea, memoria, tarea, evento, funcionalidad (o func), investiga, comprar, diario\n"
             "Ejemplo: /mvpendiente 1 tarea \"Titulo\" 25-03-2026"
         )
         return
@@ -2917,6 +3180,10 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         idea = _guardar_idea(combo, fuente="telegram_mvpendiente")
         ok_fin = True
         await update.message.reply_text(f"Movido a idea.\nResumen: {idea.resumen}")
+    elif tipo == "memoria":
+        mem = _guardar_memoria(combo, fuente="telegram_mvpendiente")
+        ok_fin = True
+        await update.message.reply_text(f"Movido a memoria.\nResumen: {mem.resumen}")
     elif tipo == "tarea":
         if await _ejecutar_creacion_tarea_deck(
             update, combo, stack_name=None, prefijo_exito="Tarea creada"
@@ -2953,14 +3220,7 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"Movido a funcionalidad.\n{tf}\nPrioridad: {emoji} {pri}/5"
         )
     elif tipo == "investiga":
-        inv = Investigacion(
-            id=_generar_id_investigacion(combo),
-            fecha=datetime.now().isoformat(),
-            estado="pendiente",
-            concepto=combo,
-            resumen="",
-            link="",
-        )
+        inv = _nueva_investigacion_pendiente(combo)
         añadir_investigacion(inv)
         ok_fin = True
         await update.message.reply_text(
@@ -3697,6 +3957,15 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Resumen: {idea.resumen}"
             )
 
+        elif accion == "memoria":
+            if not contenido:
+                await estado.edit_text("La memoria no puede estar vacia. Di: memoria <texto>")
+                return
+            mem = _guardar_memoria(contenido, fuente="telegram_audio")
+            await estado.edit_text(
+                f"Memoria guardada desde audio.\nResumen: {mem.resumen}"
+            )
+
         elif accion == "funcionalidad":
             if not contenido:
                 await estado.edit_text(
@@ -3857,19 +4126,13 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "Di investiga seguido del concepto o frase (ej. investiga paneles solares bifaciales)."
                 )
                 return
-            inv = Investigacion(
-                id=_generar_id_investigacion(contenido.strip()),
-                fecha=datetime.now().isoformat(),
-                estado="pendiente",
-                concepto=contenido.strip(),
-                resumen="",
-                link="",
-            )
+            inv = _nueva_investigacion_pendiente(contenido.strip())
             añadir_investigacion(inv)
             await estado.edit_text(
                 f"Investigacion encolada desde audio (pendiente).\n"
                 f"ID: {inv.id}\n"
-                f"Concepto: {inv.concepto}"
+                f"Concepto: {inv.concepto}\n"
+                f"Archivo .md: {inv.archivo}"
             )
 
         elif accion == "huevos":
@@ -3925,7 +4188,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Guardado en pendientes (sin accion reconocida en el audio).\n"
                 f"ID: {pend.id}\n"
                 f"Usa /listpendientes y /mvpendiente <n|id> <tipo> [args extra]\n"
-                f"Tipos: idea, tarea, evento, funcionalidad, func, investiga, comprar, diario"
+                f"Tipos: idea, memoria, tarea, evento, funcionalidad, func, investiga, comprar, diario"
             )
 
     except Exception as exc:
@@ -3969,6 +4232,10 @@ def main() -> None:
     app.add_handler(CommandHandler("listideas", cmd_listideas))
     app.add_handler(CommandHandler("veridea", cmd_veridea))
     app.add_handler(CommandHandler("rmidea", cmd_rmidea))
+    app.add_handler(CommandHandler("memoria", cmd_memoria))
+    app.add_handler(CommandHandler("listmemorias", cmd_listmemorias))
+    app.add_handler(CommandHandler("vermemoria", cmd_vermemoria))
+    app.add_handler(CommandHandler("rmmemoria", cmd_rmmemoria))
     app.add_handler(CommandHandler("proyecto", cmd_proyecto))
     app.add_handler(CommandHandler("cancelarproyecto", cmd_cancelarproyecto))
     app.add_handler(CommandHandler("listproyecto", cmd_listproyecto))

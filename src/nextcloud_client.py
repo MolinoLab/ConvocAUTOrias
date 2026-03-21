@@ -18,7 +18,8 @@ except ImportError:
 
 def _url_webdav(ruta: str) -> str:
     base = config.NEXTCLOUD_URL.rstrip("/")
-    path = f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/{config.NEXTCLOUD_CARPETA}/{ruta}"
+    carpeta = config.NEXTCLOUD_CARPETA.strip("/")
+    path = f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/{carpeta}/{ruta}"
     return base + path
 
 
@@ -53,6 +54,24 @@ def _split_path_parts(path: str) -> Iterable[str]:
     return [p for p in path.strip("/").split("/") if p]
 
 
+def asegurar_arbol_usuario(ruta_bajo_files_user: str) -> bool:
+    """Crea .../remote.php/dav/files/{USER}/p1/p2/... (MKCOL por segmento)."""
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        return False
+    if not requests:
+        return False
+    try:
+        base_url = f"{config.NEXTCLOUD_URL.rstrip('/')}/remote.php/dav/files/{config.NEXTCLOUD_USER}"
+        current = base_url
+        for part in _split_path_parts(ruta_bajo_files_user):
+            current = f"{current}/{part}"
+            if not _mkcol(current):
+                return False
+        return True
+    except Exception:
+        return False
+
+
 def subir_borrador(nombre_archivo: str, contenido: str) -> bool:
     """
     Sube un borrador (texto) a la carpeta Convocatorias en Nextcloud.
@@ -71,36 +90,26 @@ def subir_borrador(nombre_archivo: str, contenido: str) -> bool:
 
 
 def asegurar_carpeta() -> bool:
-    """Crea la carpeta Convocatorias si no existe."""
-    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
-        return False
-    if not requests:
-        return False
-    try:
-        base = config.NEXTCLOUD_URL.rstrip("/")
-        path = f"/remote.php/dav/files/{config.NEXTCLOUD_USER}/{config.NEXTCLOUD_CARPETA}"
-        url = base + path
-        return _mkcol(url)
-    except Exception:
-        return False
+    """Crea la carpeta de borradores de convocatorias (NEXTCLOUD_CARPETA)."""
+    return asegurar_arbol_usuario(config.NEXTCLOUD_CARPETA)
 
 
 def asegurar_carpeta_ideas() -> bool:
     """Crea la ruta de ideas en Nextcloud si no existe."""
-    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+    return asegurar_arbol_usuario(config.NEXTCLOUD_IDEAS_PATH)
+
+
+def _asegurar_subcarpetas_bajo_ideas(nombre_archivo_relativo: str) -> bool:
+    """Crea directorios intermedios (p. ej. subcarpetas) bajo NEXTCLOUD_IDEAS_PATH."""
+    if not asegurar_carpeta_ideas():
         return False
-    if not requests:
-        return False
-    try:
-        base_url = f"{config.NEXTCLOUD_URL.rstrip('/')}/remote.php/dav/files/{config.NEXTCLOUD_USER}"
-        current = base_url
-        for part in _split_path_parts(config.NEXTCLOUD_IDEAS_PATH):
-            current = f"{current}/{part}"
-            if not _mkcol(current):
-                return False
+    norm = (nombre_archivo_relativo or "").strip().replace("\\", "/")
+    if "/" not in norm:
         return True
-    except Exception:
-        return False
+    parent = norm.rsplit("/", 1)[0].strip("/")
+    if not parent:
+        return True
+    return asegurar_arbol_usuario(f"{config.NEXTCLOUD_IDEAS_PATH}/{parent}")
 
 
 def subir_archivo_ideas(nombre_archivo: str, contenido: bytes) -> bool:
@@ -110,7 +119,7 @@ def subir_archivo_ideas(nombre_archivo: str, contenido: bytes) -> bool:
     if not requests:
         return False
     try:
-        if not asegurar_carpeta_ideas():
+        if not _asegurar_subcarpetas_bajo_ideas(nombre_archivo):
             return False
         url = _url_webdav_ideas(nombre_archivo)
         r = requests.put(url, data=contenido, auth=_auth(), timeout=30)
@@ -122,6 +131,34 @@ def subir_archivo_ideas(nombre_archivo: str, contenido: bytes) -> bool:
 def subir_idea(nombre_archivo: str, contenido: str) -> bool:
     """Sube una idea markdown/texto a la carpeta de ideas."""
     return subir_archivo_ideas(nombre_archivo, contenido.encode("utf-8"))
+
+
+def subir_archivo_bajo_raiz(path_raiz_nc: str, nombre_archivo: str, contenido: bytes) -> bool:
+    """
+    Sube a files/{USER}/{path_raiz_nc}/{nombre_archivo}.
+    path_raiz_nc ej. Documents/.../Proyectos; nombre solo archivo o con subcarpetas.
+    """
+    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
+        return False
+    if not requests:
+        return False
+    raiz = (path_raiz_nc or "").strip().strip("/")
+    nombre = (nombre_archivo or "").strip().replace("\\", "/").lstrip("/")
+    if not raiz or not nombre:
+        return False
+    full = f"{raiz}/{nombre}"
+    parent = full.rsplit("/", 1)[0]
+    try:
+        if not asegurar_arbol_usuario(parent):
+            return False
+        url = (
+            f"{config.NEXTCLOUD_URL.rstrip('/')}/remote.php/dav/files/"
+            f"{config.NEXTCLOUD_USER}/{full}"
+        )
+        r = requests.put(url, data=contenido, auth=_auth(), timeout=30)
+        return r.status_code in (200, 201, 204)
+    except Exception:
+        return False
 
 
 def _url_webdav_facturas(ruta_relativa: str) -> str:
@@ -138,23 +175,12 @@ def asegurar_directorios_facturas(rel_dir: str) -> bool:
     Crea NEXTCLOUD_FACTURAS_PATH y rel_dir (sin nombre de archivo).
     rel_dir ej. 2026/Gastos/T1
     """
-    if not all([config.NEXTCLOUD_URL, config.NEXTCLOUD_USER, config.NEXTCLOUD_PASSWORD]):
-        return False
-    if not requests:
-        return False
-    try:
-        base_url = f"{config.NEXTCLOUD_URL.rstrip('/')}/remote.php/dav/files/{config.NEXTCLOUD_USER}"
-        partes = list(_split_path_parts(config.NEXTCLOUD_FACTURAS_PATH)) + list(
-            _split_path_parts(rel_dir)
+    rel = (rel_dir or "").strip().strip("/")
+    if rel:
+        return asegurar_arbol_usuario(
+            f"{config.NEXTCLOUD_FACTURAS_PATH.strip('/')}/{rel}"
         )
-        current = base_url
-        for part in partes:
-            current = f"{current}/{part}"
-            if not _mkcol(current):
-                return False
-        return True
-    except Exception:
-        return False
+    return asegurar_arbol_usuario(config.NEXTCLOUD_FACTURAS_PATH)
 
 
 def subir_archivo_facturas(ruta_relativa_completa: str, contenido: bytes) -> bool:
@@ -165,7 +191,7 @@ def subir_archivo_facturas(ruta_relativa_completa: str, contenido: bytes) -> boo
         return False
     if not requests:
         return False
-    ruta = ruta.strip().lstrip("/")
+    ruta = ruta_relativa_completa.strip().lstrip("/")
     if not ruta:
         return False
     segmentos = [p for p in ruta.split("/") if p]

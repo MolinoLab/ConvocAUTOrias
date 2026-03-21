@@ -13,7 +13,7 @@ DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
 # Versión del bot (mostrar en /ayuda; incrementar manualmente en cada release)
-APP_VERSION = os.getenv("APP_VERSION", "0.22").strip() or "0.22"
+APP_VERSION = os.getenv("APP_VERSION", "0.23").strip() or "0.23"
 # Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
 
@@ -42,7 +42,43 @@ OLLAMA_MODEL_INVESTIGACION = _ollama_inv if _ollama_inv else OLLAMA_MODEL
 NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
 NEXTCLOUD_USER = os.getenv("NEXTCLOUD_USER", "")
 NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
-NEXTCLOUD_CARPETA = os.getenv("NEXTCLOUD_CARPETA", "Convocatorias")
+
+# Base del vault Obsidian (ruta bajo el usuario de Nextcloud, con /)
+NEXTCLOUD_VAULT_BASE = os.getenv(
+    "NEXTCLOUD_VAULT_BASE",
+    "Documents/b1tacora/b1tdreamer",
+).strip().strip("/")
+_vault = NEXTCLOUD_VAULT_BASE
+
+# Cada categoría en una subcarpeta del vault (sobrescribible con .env)
+NEXTCLOUD_CARPETA = os.getenv(
+    "NEXTCLOUD_CARPETA",
+    f"{_vault}/Convocatorias",
+).strip().strip("/")
+NEXTCLOUD_IDEAS_PATH = os.getenv(
+    "NEXTCLOUD_IDEAS_PATH",
+    f"{_vault}/Ideas",
+).strip().strip("/")
+NEXTCLOUD_FACTURAS_PATH = os.getenv(
+    "NEXTCLOUD_FACTURAS_PATH",
+    f"{_vault}/Facturas",
+).strip().strip("/")
+NEXTCLOUD_PROYECTOS_PATH = os.getenv(
+    "NEXTCLOUD_PROYECTOS_PATH",
+    f"{_vault}/Proyectos",
+).strip().strip("/")
+NEXTCLOUD_INVESTIGACIONES_PATH = os.getenv(
+    "NEXTCLOUD_INVESTIGACIONES_PATH",
+    f"{_vault}/Investigaciones",
+).strip().strip("/")
+NEXTCLOUD_MEMORIAS_PATH = os.getenv(
+    "NEXTCLOUD_MEMORIAS_PATH",
+    f"{_vault}/Memorias",
+).strip().strip("/")
+NEXTCLOUD_DATOS_CSV_PATH = os.getenv(
+    "NEXTCLOUD_DATOS_CSV_PATH",
+    f"{_vault}/Datos",
+).strip().strip("/")
 DECK_BOARD_NAME = os.getenv("DECK_BOARD_NAME", "MolinoLab").strip()
 DECK_STACK_NAME = os.getenv("DECK_STACK_NAME", "").strip()
 
@@ -60,15 +96,21 @@ if _deck_assign_raw:
             }
     except json.JSONDecodeError:
         pass
-NEXTCLOUD_IDEAS_PATH = os.getenv(
-    "NEXTCLOUD_IDEAS_PATH",
-    "Documents/b1tacora/b1tdreamer/Ideas",
-).strip().strip("/")
-NEXTCLOUD_FACTURAS_PATH = os.getenv(
-    "NEXTCLOUD_FACTURAS_PATH",
-    "Documentación/Facturas",
-).strip().strip("/")
 
+# JSON: {"5088114697": "nextcloud_deck_uid", ...} para usuarios sin @username en Telegram
+_deck_assign_id_raw = os.getenv("DECK_ASSIGNEE_BY_TELEGRAM_ID", "").strip()
+DECK_ASSIGNEE_BY_TELEGRAM_ID: dict[int, str] = {}
+if _deck_assign_id_raw:
+    try:
+        obj_id = json.loads(_deck_assign_id_raw)
+        if isinstance(obj_id, dict):
+            for k, v in obj_id.items():
+                ks = str(k).strip()
+                vs = str(v).strip()
+                if ks.isdigit() and vs:
+                    DECK_ASSIGNEE_BY_TELEGRAM_ID[int(ks)] = vs
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
 
 def _parse_allowlist(raw: str) -> tuple[set[str], set[int]]:
     usernames: set[str] = set()
@@ -119,6 +161,9 @@ CSV_DIARIO = DATA_DIR / "diario.csv"
 CARPETA_DIARIO = DATA_DIR / "diario"
 CARPETA_DIARIO.mkdir(parents=True, exist_ok=True)
 CSV_CONTABILIDAD = DATA_DIR / "contabilidad.csv"
+CSV_MEMORIAS = DATA_DIR / "memorias.csv"
+CARPETA_MEMORIAS = DATA_DIR / "memorias"
+CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")

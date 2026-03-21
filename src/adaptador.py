@@ -103,9 +103,12 @@ def adaptar_y_subir(convocatoria_titulo: str, convocatoria_descripcion: str, id_
     Retorna (contenido, exito_upload).
     """
     contenido = adaptar(convocatoria_titulo, convocatoria_descripcion)
-    # Nombre de archivo seguro
-    nombre = "".join(c if c.isalnum() or c in " -_" else "_" for c in convocatoria_titulo[:50])
-    nombre = f"borrador_{id_conv or nombre}.md"
+    from .slug_archivo_md import texto_a_slug_palabras
+
+    slug = texto_a_slug_palabras(convocatoria_titulo, 5)
+    if not slug or slug == "nota":
+        slug = (id_conv or "borrador")[:16] or "borrador"
+    nombre = f"borrador_{slug}.md"
     try:
         from .nextcloud_client import asegurar_carpeta, subir_borrador
         asegurar_carpeta()

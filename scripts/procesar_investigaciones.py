@@ -169,7 +169,8 @@ def _procesar_completo(inv: Investigacion) -> None:
     if not cuerpo:
         cuerpo = resumen or "(Sin cuerpo)"
 
-    path_md = config.CARPETA_INVESTIGACIONES / f"{inv.id}.md"
+    nombre_md = (inv.archivo or "").strip() or f"{inv.id}.md"
+    path_md = config.CARPETA_INVESTIGACIONES / nombre_md
     path_md.write_text(_front_matter(inv, link) + cuerpo, encoding="utf-8")
 
     inv.resumen = resumen[:2000]

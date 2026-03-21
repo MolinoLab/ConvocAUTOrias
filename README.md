@@ -120,6 +120,8 @@ N8N_PASSWORD=contraseña_segura_para_admin
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_CHAT_ID=tu_chat_id
 TELEGRAM_ALLOWLIST=@b1tdreamer
+# Usuarios sin @username en Telegram: añade su ID numérico separado por comas, p. ej.:
+# TELEGRAM_ALLOWLIST=@yo,5088114697
 
 # Ollama (en Docker usa http://ollama:11434)
 OLLAMA_URL=http://localhost:11434
@@ -138,17 +140,26 @@ OLLAMA_MODEL=phi3:mini
 # Whisper (transcripcion de audio)
 WHISPER_MODEL=base
 
-# Directorio de datos (opcional)
+# Directorio de datos (opcional). Para Obsidian: apunta a una carpeta dentro del vault
+# que sincroniza el cliente Nextcloud, o usa un enlace simbólico / union (Windows: mklink /J).
 DATA_DIR=data
 
 # Nextcloud WebDAV
 NEXTCLOUD_URL=https://tu-nextcloud.com
 NEXTCLOUD_USER=tu_usuario
 NEXTCLOUD_PASSWORD=tu_password
-NEXTCLOUD_CARPETA=Convocatorias
+# Base del vault (Obsidian). Por defecto: Documents/b1tacora/b1tdreamer
+# NEXTCLOUD_VAULT_BASE=Documents/b1tacora/b1tdreamer
+# Rutas completas por categoría (opcional; si no las pones, se cuelgan del vault):
+# Convocatorias, Ideas, Facturas, Proyectos, Investigaciones, Memorias, Datos (CSVs)
+# NEXTCLOUD_CARPETA=Documents/b1tacora/b1tdreamer/Convocatorias
 DECK_BOARD_NAME=MolinoLab
 # DECK_STACK_NAME=Pendientes
-NEXTCLOUD_IDEAS_PATH=Documents/b1tacora/b1tdreamer/Ideas
+# Asignar tarjetas Deck al crear tareas desde Telegram (uid de usuario en Nextcloud Deck):
+# DECK_ASSIGNEE_BY_TELEGRAM_USERNAME={"miusuario":"uid-deck"}
+# Si la persona no tiene @username público, usa su id numérico de Telegram:
+# DECK_ASSIGNEE_BY_TELEGRAM_ID={"5088114697":"uid-deck"}
+# (Las rutas de ideas/facturas/etc. usan el vault por defecto; solo define NEXTCLOUD_IDEAS_PATH si quieres otro sitio.)
 
 # CalDAV (opcional)
 CALDAV_URL=https://tu-nextcloud.com/remote.php/dav
@@ -163,6 +174,10 @@ CALDAV_CALENDAR_NAME=MolinoLab
 # debe ser el de CALDAV_USER, o bien comparte el calendario con esa cuenta: el bot resolverá la
 # colección real vía CalDAV usando el slug (molinolab) o CALDAV_CALENDAR_NAME.
 ```
+
+### Sincronización opcional hacia Nextcloud (WebDAV)
+
+Desde la raíz del proyecto: `python scripts/sync_nextcloud_datos.py`. Coloca los CSV en `{vault}/Datos/` y los `.md` en `{vault}/Ideas/`, `Proyectos/`, `Investigaciones/` y `Memorias/` (según `NEXTCLOUD_VAULT_BASE` y las variables `NEXTCLOUD_*_PATH` en `config.py`).
 
 ## Arquitectura Docker
 
