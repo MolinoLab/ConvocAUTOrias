@@ -12,6 +12,11 @@ from dotenv import load_dotenv
 DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
+# Versión del bot (mostrar en /ayuda; incrementar manualmente en cada release)
+APP_VERSION = os.getenv("APP_VERSION", "0.22").strip() or "0.22"
+# Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
+
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -58,6 +63,10 @@ if _deck_assign_raw:
 NEXTCLOUD_IDEAS_PATH = os.getenv(
     "NEXTCLOUD_IDEAS_PATH",
     "Documents/b1tacora/b1tdreamer/Ideas",
+).strip().strip("/")
+NEXTCLOUD_FACTURAS_PATH = os.getenv(
+    "NEXTCLOUD_FACTURAS_PATH",
+    "Documentación/Facturas",
 ).strip().strip("/")
 
 
@@ -109,6 +118,7 @@ CSV_PENDIENTES = DATA_DIR / "pendientes.csv"
 CSV_DIARIO = DATA_DIR / "diario.csv"
 CARPETA_DIARIO = DATA_DIR / "diario"
 CARPETA_DIARIO.mkdir(parents=True, exist_ok=True)
+CSV_CONTABILIDAD = DATA_DIR / "contabilidad.csv"
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")

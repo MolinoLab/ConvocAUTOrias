@@ -22,3 +22,8 @@ python-dotenv>=1.0.0
 
 # Transcripcion de audio
 openai-whisper
+
+# Facturas (PDF; imagen + OCR opcional con Tesseract instalado en el sistema)
+pypdf>=4.0
+Pillow>=10.0
+pytesseract>=0.3.10
