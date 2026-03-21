@@ -43,7 +43,10 @@ NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
 NEXTCLOUD_USER = os.getenv("NEXTCLOUD_USER", "")
 NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
 
-# Base del vault Obsidian (ruta bajo el usuario de Nextcloud, con /)
+# Base del vault Obsidian en WebDAV: siempre bajo files/{NEXTCLOUD_USER}/...
+# Si el vault real está en la cuenta de b1tdreamer, comparte esa carpeta con NEXTCLOUD_USER
+# (p. ej. bot) con permiso de edición y pon aquí la ruta tal como la ve *ese* usuario en
+# Archivos (no uses enlaces internos tipo /f/2343; no son rutas DAV).
 NEXTCLOUD_VAULT_BASE = os.getenv(
     "NEXTCLOUD_VAULT_BASE",
     "Documents/b1tacora/b1tdreamer",
