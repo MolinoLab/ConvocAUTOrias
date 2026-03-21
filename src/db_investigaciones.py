@@ -105,3 +105,12 @@ def buscar_por_id(id_buscar: str) -> Investigacion | None:
         if x.id == id_buscar:
             return x
     return None
+
+
+def eliminar(id_buscar: str) -> bool:
+    items = listar()
+    nuevos = [x for x in items if x.id != id_buscar]
+    if len(nuevos) == len(items):
+        return False
+    escribir_todo(nuevos)
+    return True

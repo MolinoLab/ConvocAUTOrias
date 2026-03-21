@@ -37,7 +37,13 @@ from src.db_funcionalidad import (
     listar as listar_func,
     eliminar as eliminar_func_db,
 )
-from src.db_investigaciones import Investigacion, añadir as añadir_investigacion
+from src.db_investigaciones import (
+    Investigacion,
+    añadir as añadir_investigacion,
+    buscar_por_id as buscar_investigacion_por_id,
+    eliminar as eliminar_investigacion_db,
+    listar as listar_investigaciones,
+)
 from src.db_enlaces import (
     Enlace,
     añadir_enlace,
@@ -111,10 +117,12 @@ CACHE_RM_CONVOS = "rm_conv_ids"
 CACHE_RM_ENLACES = "rm_enlace_ids"
 CACHE_RM_PROYECTOS = "rm_proyecto_ids"
 CACHE_RM_TIEMPOS = "rm_tiempo_ids"
+CACHE_RM_INVESTIGACIONES = "rm_investigacion_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
+INV_RESUMEN_LISTA_MAX = 72
 IDEA_RESUMEN_LISTA_MAX = 70
 ENLACE_RESUMEN_LISTA_MAX = 72
 MAX_TELEGRAM_MSG = 4000
@@ -382,7 +390,10 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/verfunc <numero>\n"
         "/rmfunc <num ...>\n\n"
         "[Investigaciones]\n"
-        "/investiga <concepto o frase> — Encola investigación (CSV + proceso automático)\n\n"
+        "/investiga <concepto o frase> — Encola investigación (CSV + proceso automático)\n"
+        "/listinvestigaciones — Listar (recientes primero)\n"
+        "/verinvestigacion <numero|id> — Detalle CSV + contenido del .md si existe\n"
+        "/rminvestigacion <numero ...> — Borrar fila y .md asociado\n\n"
         "[Tareas Deck]\n"
         '/tarea "Titulo" [fecha] ["Desc"] — Tarjeta (columna por defecto)\n'
         f'/comprar "Titulo" [fecha] ["Desc"] — Columna "{DECK_STACK_COMPRAR}"\n'
@@ -1535,6 +1546,166 @@ async def cmd_investiga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         f"ID: {inv.id}\n"
         f"Concepto: {inv.concepto}"
     )
+
+
+def _ruta_md_investigacion(inv_id: str) -> Path:
+    return config.CARPETA_INVESTIGACIONES / f"{inv_id}.md"
+
+
+def _leer_cuerpo_md_investigacion(inv_id: str) -> str | None:
+    p = _ruta_md_investigacion(inv_id)
+    if not p.is_file():
+        return None
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _formatear_investigacion_completa(inv: Investigacion) -> str:
+    bloque_csv = (
+        f"ID: {inv.id}\n"
+        f"Fecha: {inv.fecha}\n"
+        f"Estado: {inv.estado}\n"
+        f"Concepto: {inv.concepto}\n"
+        f"Resumen: {inv.resumen or '(vacío)'}\n"
+        f"Link: {inv.link or '(vacío)'}\n"
+    )
+    md = _leer_cuerpo_md_investigacion(inv.id)
+    if md is None:
+        return bloque_csv + "\n--- Markdown ---\n(Aún no hay archivo .md; estado pendiente o sin generar.)"
+    return bloque_csv + "\n--- Markdown ---\n" + md
+
+
+async def cmd_listinvestigaciones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    todas = listar_investigaciones()
+    if not todas:
+        await update.message.reply_text("No hay investigaciones registradas.")
+        return
+
+    todas.sort(key=lambda x: (x.fecha or "", x.concepto.lower()), reverse=True)
+
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_INVESTIGACIONES] = [x.id for x in todas]
+
+    lineas: list[str] = []
+    for i, inv in enumerate(todas, 1):
+        c = (
+            (inv.concepto[:INV_RESUMEN_LISTA_MAX] + "...")
+            if len(inv.concepto) > INV_RESUMEN_LISTA_MAX
+            else inv.concepto
+        )
+        lineas.append(f"{i}. [{inv.estado}] {c}")
+
+    cabecera = f"Investigaciones ({len(todas)}):\n\n"
+    texto_completo = cabecera + "\n".join(lineas)
+
+    if len(texto_completo) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_TELEGRAM_MSG])
+        await update.message.reply_text(texto_completo[MAX_TELEGRAM_MSG:])
+
+
+async def cmd_verinvestigacion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verinvestigacion <numero|id>\n"
+            "El número es el de /listinvestigaciones en este chat."
+        )
+        return
+
+    argumento = context.args[0].strip()
+    inv: Investigacion | None = None
+    if argumento.isdigit():
+        n = int(argumento)
+        cache = (context.chat_data or {}).get(CACHE_RM_INVESTIGACIONES) or []
+        if n < 1 or n > len(cache):
+            await update.message.reply_text(
+                "Índice inválido o lista antigua. Ejecuta /listinvestigaciones primero en este chat."
+            )
+            return
+        inv = buscar_investigacion_por_id(cache[n - 1])
+    else:
+        inv = buscar_investigacion_por_id(argumento)
+
+    if not inv:
+        await update.message.reply_text(
+            "No se encontró esa investigación.\nUsa /listinvestigaciones para ver el listado."
+        )
+        return
+
+    await _reply_texto_largo(update, _formatear_investigacion_completa(inv))
+
+
+async def cmd_rminvestigacion(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rminvestigacion <numero> [numero ...]\n"
+            "Los números son los de /listinvestigaciones en este chat."
+        )
+        return
+
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo números del listado, separados por espacios."
+        )
+        return
+
+    cache = (context.chat_data or {}).get(CACHE_RM_INVESTIGACIONES) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        iid = cache[n - 1]
+        if iid not in vistos:
+            vistos.add(iid)
+            ids_objetivo.append(iid)
+
+    if not ids_objetivo:
+        msg = "Ningún número válido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listinvestigaciones en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    fallo_almacen = 0
+    for iid in ids_objetivo:
+        if eliminar_investigacion_db(iid):
+            ok_n += 1
+            p = _ruta_md_investigacion(iid)
+            if p.is_file():
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+        else:
+            fallo_almacen += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_INVESTIGACIONES, None)
+
+    partes = [f"Investigaciones eliminadas: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if fallo_almacen:
+        partes.append(f"No se pudieron borrar: {fallo_almacen}.")
+    await update.message.reply_text(" ".join(partes))
 
 
 async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2921,6 +3092,9 @@ def main() -> None:
     app.add_handler(CommandHandler("listconvo", cmd_listar))
     app.add_handler(CommandHandler("verconvo", cmd_verconvo))
     app.add_handler(CommandHandler("investiga", cmd_investiga))
+    app.add_handler(CommandHandler("listinvestigaciones", cmd_listinvestigaciones))
+    app.add_handler(CommandHandler("verinvestigacion", cmd_verinvestigacion))
+    app.add_handler(CommandHandler("rminvestigacion", cmd_rminvestigacion))
     app.add_handler(CommandHandler("func", cmd_func))
     app.add_handler(CommandHandler("listfunc", cmd_listfunc))
     app.add_handler(CommandHandler("listfuncionalidades", cmd_listfunc))
