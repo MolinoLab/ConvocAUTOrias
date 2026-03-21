@@ -17,6 +17,16 @@ except ImportError:
 
 
 _LAST_DECK_ERROR = ""
+_LAST_DECK_ASSIGN_WARN = ""
+
+
+def _set_last_assign_warn(msg: str) -> None:
+    global _LAST_DECK_ASSIGN_WARN
+    _LAST_DECK_ASSIGN_WARN = (msg or "").strip()[:400]
+
+
+def obtener_ultimo_aviso_asignacion_deck() -> str:
+    return _LAST_DECK_ASSIGN_WARN
 
 
 def _set_last_error(msg: str) -> None:
@@ -48,17 +58,48 @@ def _headers() -> dict:
     }
 
 
+def _asignar_usuarios_a_tarjeta(
+    base: str,
+    board_id: int,
+    stack_id: int,
+    card_id: int,
+    uids: list[str],
+) -> str:
+    """Asigna Nextcloud uids a la tarjeta. Devuelve aviso no vacío si algo falló."""
+    avisos: list[str] = []
+    for uid in uids:
+        u = (uid or "").strip()
+        if not u:
+            continue
+        try:
+            ra = requests.put(
+                f"{base}/boards/{board_id}/stacks/{stack_id}/cards/{card_id}/assignUser",
+                headers=_headers(),
+                auth=_auth(),
+                json={"userId": u},
+                timeout=20,
+            )
+            if ra.status_code not in (200, 201):
+                avisos.append(f"{u}:{ra.status_code}")
+        except Exception as exc:
+            avisos.append(f"{u}:{str(exc)[:80]}")
+    return "; ".join(avisos) if avisos else ""
+
+
 def crear_tarea_deck(
     titulo: str,
     descripcion: str = "",
     fecha_due: str | None = None,
     board_name: str | None = None,
     stack_name: str | None = None,
+    assigned_user_uids: list[str] | None = None,
 ) -> bool:
     """
     Crea una tarjeta en Deck. Busca tablero por nombre y luego columna/stack.
+    Opcional: assigned_user_uids (uid de usuario Nextcloud, string) vía assignUser tras crear.
     """
     _set_last_error("")
+    _set_last_assign_warn("")
     if not requests or not HTTPBasicAuth:
         _set_last_error("requests no disponible para Deck API")
         return False
@@ -137,6 +178,24 @@ def crear_tarea_deck(
             timeout=20,
         )
         if rc.status_code in (200, 201):
+            card_id = None
+            try:
+                data = rc.json() if rc.text else {}
+                if isinstance(data, dict):
+                    card_id = data.get("id")
+            except Exception:
+                card_id = None
+            uids = [u for u in (assigned_user_uids or []) if (u or "").strip()]
+            if uids and card_id is not None:
+                warn = _asignar_usuarios_a_tarjeta(
+                    base, int(board_id), int(stack_id), int(card_id), uids
+                )
+                if warn:
+                    _set_last_assign_warn(f"Asignacion Deck: {warn}")
+            elif uids and card_id is None:
+                _set_last_assign_warn(
+                    "Asignacion Deck omitida: la API no devolvio id de tarjeta."
+                )
             return True
         _set_last_error(f"Crear card Deck devolvio {rc.status_code}")
         return False

@@ -102,6 +102,18 @@ def añadir(cantidad: int, fecha_dia: str, fuente: str) -> RegistroHuevo:
     return reg
 
 
+def total_cantidad_en_fecha(fecha_dia: str) -> int:
+    """Suma todas las cantidades registradas para fecha_dia (YYYY-MM-DD)."""
+    fecha_dia = (fecha_dia or "").strip()
+    if not fecha_dia:
+        return 0
+    total = 0
+    for r in leer_todos():
+        if r.fecha.strip() == fecha_dia:
+            total += r.cantidad
+    return total
+
+
 def resumen_ultimos_dias_desde_hoy(num_dias: int) -> list[tuple[str, int]]:
     """
     Devuelve lista (fecha_YYYY-MM-DD, total_cantidad) desde hoy hacia atrás,

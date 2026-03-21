@@ -1,7 +1,7 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
 ideas, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
-tareas Deck, eventos CalDAV, huevos, audio. Ver /ayuda.
+tareas Deck, eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import hashlib
@@ -64,9 +64,22 @@ from src.deck_client import (
     crear_tarea_deck,
     listar_tareas_deck,
     obtener_tarjeta_deck,
+    obtener_ultimo_aviso_asignacion_deck,
     obtener_ultimo_error_deck,
 )
-from src.db_huevos import añadir as añadir_huevo, resumen_ultimos_dias_desde_hoy
+from src.db_diario import añadir_entrada as diario_añadir_entrada
+from src.db_huevos import (
+    añadir as añadir_huevo,
+    resumen_ultimos_dias_desde_hoy,
+    total_cantidad_en_fecha,
+)
+from src.db_pendientes import (
+    Pendiente,
+    añadir as añadir_pendiente,
+    buscar_por_id as buscar_pendiente_por_id,
+    eliminar as eliminar_pendiente_db,
+    listar_recientes_primero as listar_pendientes_recientes,
+)
 from src.db_proyectos import (
     ESTADOS_PROYECTO_VALIDOS,
     Proyecto,
@@ -118,11 +131,16 @@ CACHE_RM_ENLACES = "rm_enlace_ids"
 CACHE_RM_PROYECTOS = "rm_proyecto_ids"
 CACHE_RM_TIEMPOS = "rm_tiempo_ids"
 CACHE_RM_INVESTIGACIONES = "rm_investigacion_ids"
+CACHE_RM_PENDIENTES_IDS = "rm_pendiente_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
 INV_RESUMEN_LISTA_MAX = 72
+PENDIENTE_RESUMEN_LISTA_MAX = 72
+_TIPOS_MV_VALIDOS = frozenset(
+    {"idea", "tarea", "evento", "funcionalidad", "investiga", "comprar", "diario"}
+)
 IDEA_RESUMEN_LISTA_MAX = 70
 ENLACE_RESUMEN_LISTA_MAX = 72
 MAX_TELEGRAM_MSG = 4000
@@ -194,6 +212,28 @@ async def _rechazar_no_autorizado(update: Update) -> None:
     msg = getattr(update, "message", None)
     if msg:
         await msg.reply_text("Este bot está restringido a un usuario autorizado.")
+
+
+def _deck_uids_para_update(update: Update | None) -> list[str]:
+    """Uids Nextcloud para asignar tarjetas Deck según username de Telegram."""
+    if not update or not update.effective_user:
+        return []
+    u = update.effective_user
+    un = (u.username or "").strip().lower()
+    if not un:
+        return []
+    uid = config.DECK_ASSIGNEE_BY_TELEGRAM_USERNAME.get(un)
+    if not uid:
+        return []
+    return [uid]
+
+
+def _primer_entero_positivo(texto: str) -> int | None:
+    m = re.search(r"\b(\d+)\b", texto or "")
+    if not m:
+        return None
+    n = int(m.group(1))
+    return n if n > 0 else None
 
 
 def _es_url(texto: str) -> bool:
@@ -328,7 +368,19 @@ def _transcribir_audio(ruta_audio: Path) -> str:
     return texto
 
 
-_ACCIONES_AUDIO = {"idea", "funcionalidad", "tarea", "evento", "comprar"}
+_ACCIONES_AUDIO = frozenset(
+    {
+        "idea",
+        "funcionalidad",
+        "tarea",
+        "evento",
+        "comprar",
+        "investiga",
+        "huevos",
+        "diario",
+    }
+)
+_ACCION_AUDIO_SINONIMOS: dict[str, str] = {"eventos": "evento"}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -342,6 +394,7 @@ def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
         return None, ""
     partes = normalizado.split(None, 1)
     candidato = re.sub(r"[,.:;!?]+$", "", partes[0]).lower()
+    candidato = _ACCION_AUDIO_SINONIMOS.get(candidato, candidato)
     if candidato in _ACCIONES_AUDIO:
         contenido = partes[1].strip() if len(partes) > 1 else ""
         return candidato, contenido
@@ -406,12 +459,23 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/verevento <numero>\n"
         "/rmevento <num ...>\n\n"
         "[Huevos]\n"
-        "/huevos <cantidad> — Registro del dia\n"
+        "/huevos <cantidad> — Registro del dia (la respuesta muestra total acumulado del dia)\n"
         "/listhuevos [dias] — Resumen hacia atras (6 por defecto)\n\n"
+        "[Diario]\n"
+        "/diario <texto> — Nota del dia (data/diario/AAAA-MM-DD.md + diario.csv)\n\n"
+        "[Pendientes]\n"
+        "Audio sin comando reconocido -> pendientes.csv\n"
+        "/listpendientes — Listar (recientes primero)\n"
+        "/verpendiente <n|id>\n"
+        "/rmpendientes <n ...>\n"
+        "/mvpendiente <n|id> <tipo> [args extra] — idea, tarea, evento, funcionalidad, "
+        "investiga, comprar, diario (func = funcionalidad)\n\n"
         "[Audio]\n"
-        "Primera palabra: idea, funcionalidad, tarea, comprar, evento. "
-        "Si no coincide, se guarda como idea.\n\n"
-        "Fechas (tarea/evento): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual. "
+        "Primera palabra: idea, funcionalidad, tarea, comprar, evento, eventos, investiga, "
+        "huevos, diario. Si no coincide, se guarda en pendientes (no como idea).\n"
+        "Por voz, tarea/compra/evento: usa 'para el' antes de la fecha "
+        "(ej. tarea comprar pan para el 25-03). Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
+        "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual. "
         "En tareas tambien YYYY-MM-DD.\n"
         "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
         "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
@@ -1439,9 +1503,29 @@ def _generar_id_investigacion(texto: str) -> str:
 _PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
 
 
+def _prioridad_desde_token_grupo(token: str) -> int | None:
+    t = (token or "").strip().lower()
+    if not t:
+        return None
+    if t.isdigit() and len(t) == 1:
+        n = int(t)
+        if 1 <= n <= 5:
+            return n
+    palabras = {
+        "uno": 1,
+        "una": 1,
+        "dos": 2,
+        "tres": 3,
+        "cuatro": 4,
+        "cinco": 5,
+    }
+    return palabras.get(t)
+
+
 def _parsear_funcionalidad_audio(contenido: str) -> tuple[str, int]:
     """
-    Separa texto y prioridad opcional al final (1-5): '... prioridad 4' o '... 4'.
+    Separa texto y prioridad: 'prioridad N' con N dígito o palabra (uno…cinco), en cualquier sitio.
+    Respaldo: un único dígito 1-5 al final (voz/transcripción antigua).
     Por defecto prioridad 3.
     """
     texto = " ".join(contenido.split()).strip()
@@ -1449,10 +1533,18 @@ def _parsear_funcionalidad_audio(contenido: str) -> tuple[str, int]:
     if not texto:
         return "", prioridad
 
-    m = re.search(r"\bprioridad\s+([1-5])\s*$", texto, re.IGNORECASE)
-    if m:
-        texto = texto[: m.start()].strip()
-        prioridad = int(m.group(1))
+    patron_pri = re.compile(
+        r"\bprioridad\s+([1-5]|uno|una|dos|tres|cuatro|cinco)\b",
+        re.IGNORECASE,
+    )
+    matches = list(patron_pri.finditer(texto))
+    if matches:
+        m = matches[-1]
+        pv = _prioridad_desde_token_grupo(m.group(1))
+        if pv is not None:
+            prioridad = pv
+        texto = (texto[: m.start()] + texto[m.end() :]).strip()
+        texto = " ".join(texto.split())
     else:
         m2 = re.search(r"\s+([1-5])\s*$", texto)
         if m2:
@@ -1918,6 +2010,40 @@ def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
     return titulo.strip(), fecha, descripcion.strip()
 
 
+def _partir_audio_para_el(contenido: str) -> tuple[str, str]:
+    """
+    Divide el payload de voz en (antes, despues) usando la frase 'para el'.
+    Si no aparece, (contenido.strip(), '').
+    """
+    texto = " ".join((contenido or "").split()).strip()
+    if not texto:
+        return "", ""
+    m = re.search(r"\bpara el\b", texto, flags=re.IGNORECASE)
+    if not m:
+        return texto, ""
+    antes = texto[: m.start()].strip()
+    despues = texto[m.end() :].strip()
+    return antes, despues
+
+
+def _parsear_tarea_audio_payload(contenido: str) -> tuple[str, str | None, str]:
+    """
+    Tarea por voz: con 'para el', el título va antes y la fecha (y resto) después.
+    Sin 'para el', mismo criterio que _parsear_args_tarea sobre el texto completo.
+    """
+    antes, despues = _partir_audio_para_el(contenido)
+    if despues.strip():
+        titulo, _, desc_titulo = _parsear_args_tarea(antes)
+        fecha, resto_tras_fecha = _extraer_fecha_iso_y_resto(despues.strip())
+        partes_desc = [
+            (desc_titulo or "").strip(),
+            (resto_tras_fecha or "").strip() if resto_tras_fecha else "",
+        ]
+        descripcion = " ".join(x for x in partes_desc if x).strip()
+        return titulo.strip(), fecha, descripcion
+    return _parsear_args_tarea(contenido)
+
+
 def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
     """Parsea nombre del evento, fecha flexible (DD/MM/YY, etc.) y hora opcional HH:MM."""
     texto = texto_raw.strip()
@@ -1943,17 +2069,27 @@ def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
     return titulo.strip(), fecha, hora
 
 
+def _parsear_evento_audio_payload(contenido: str) -> tuple[str, str | None, str | None]:
+    """Evento por voz: con 'para el', nombre antes y fecha/hora después."""
+    antes, despues = _partir_audio_para_el(contenido)
+    if despues.strip():
+        n2, fecha_ev, hora_ev = _parsear_args_evento(despues)
+        nombre = (antes.strip() or n2.strip()).strip()
+        return nombre, fecha_ev, hora_ev
+    return _parsear_args_evento(contenido)
+
+
 async def _ejecutar_creacion_tarea_deck(
     update: Update,
     texto_raw: str,
     *,
     stack_name: str | None = None,
     prefijo_exito: str = "Tarea creada",
-) -> None:
+) -> bool:
     titulo, fecha, descripcion = _parsear_args_tarea(texto_raw)
     if not titulo:
         await update.message.reply_text("El titulo de la tarea no puede estar vacio.")
-        return
+        return False
 
     if fecha:
         try:
@@ -1963,7 +2099,7 @@ async def _ejecutar_creacion_tarea_deck(
                 f"Fecha invalida: {fecha}\n"
                 "Usa DD-MM-AAAA, DD-MM, solo DD (mes actual) o YYYY-MM-DD."
             )
-            return
+            return False
 
     msg = await update.message.reply_text("Creando tarea en Deck...")
     ok = crear_tarea_deck(
@@ -1971,6 +2107,7 @@ async def _ejecutar_creacion_tarea_deck(
         descripcion=descripcion,
         fecha_due=fecha,
         stack_name=stack_name,
+        assigned_user_uids=_deck_uids_para_update(update),
     )
 
     if ok:
@@ -1982,13 +2119,17 @@ async def _ejecutar_creacion_tarea_deck(
             partes.append(f"Fecha limite: {fecha}")
         if descripcion:
             partes.append(f"Descripcion: {descripcion}")
+        aviso_asg = obtener_ultimo_aviso_asignacion_deck()
+        if aviso_asg:
+            partes.append(aviso_asg)
         await msg.edit_text("\n".join(partes))
-    else:
-        deck_error = obtener_ultimo_error_deck()
-        await msg.edit_text(
-            "No se pudo crear la tarea en Deck.\n"
-            f"{deck_error or 'sin detalle'}"
-        )
+        return True
+    deck_error = obtener_ultimo_error_deck()
+    await msg.edit_text(
+        "No se pudo crear la tarea en Deck.\n"
+        f"{deck_error or 'sin detalle'}"
+    )
+    return False
 
 
 async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2042,6 +2183,51 @@ async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def _ejecutar_creacion_evento_desde_texto(update: Update, texto_raw: str) -> bool:
+    """Crea evento CalDAV desde texto ya sin prefijo /evento. Devuelve True si se creó."""
+    nombre, fecha_ev, hora_ev = _parsear_args_evento(texto_raw)
+
+    if not nombre:
+        await update.message.reply_text("El nombre del evento no puede estar vacio.")
+        return False
+    if not fecha_ev:
+        await update.message.reply_text(
+            "Falta una fecha reconocible (ej. 20-03-2026, 20-03, 20/3/26, o solo el dia 15 si es el unico numero 1-31)."
+        )
+        return False
+
+    fecha_iso = _fecha_evento_ddmmyyyy_a_iso(fecha_ev)
+    if fecha_iso is None:
+        await update.message.reply_text(
+            f"Fecha invalida: {fecha_ev}\n"
+            "Usa dia-mes-año con / o -; año de 2 cifras; sin año = año actual; "
+            "un solo numero 1-31 = dia en el mes actual."
+        )
+        return False
+
+    if hora_ev:
+        try:
+            datetime.strptime(hora_ev, "%H:%M")
+        except ValueError:
+            await update.message.reply_text(
+                f"Hora invalida: {hora_ev}\nUsa formato HH:MM en 24 h (ej. 14:30)"
+            )
+            return False
+
+    msg = await update.message.reply_text("Creando evento en el calendario...")
+    ok = crear_evento(nombre, fecha_iso, hora=hora_ev)
+
+    if ok:
+        partes = [f"Evento creado: {nombre}", f"Fecha: {fecha_ev}"]
+        if hora_ev:
+            partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+        await msg.edit_text("\n".join(partes))
+        return True
+    err = obtener_ultimo_error_evento()
+    await msg.edit_text("No se pudo crear el evento en CalDAV.\n" + (err or "sin detalle"))
+    return False
+
+
 async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -2060,48 +2246,7 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    nombre, fecha_ev, hora_ev = _parsear_args_evento(texto_raw)
-
-    if not nombre:
-        await update.message.reply_text("El nombre del evento no puede estar vacio.")
-        return
-    if not fecha_ev:
-        await update.message.reply_text(
-            "Falta una fecha reconocible (ej. 20-03-2026, 20-03, 20/3/26, o solo el dia 15 si es el unico numero 1-31)."
-        )
-        return
-
-    fecha_iso = _fecha_evento_ddmmyyyy_a_iso(fecha_ev)
-    if fecha_iso is None:
-        await update.message.reply_text(
-            f"Fecha invalida: {fecha_ev}\n"
-            "Usa dia-mes-año con / o -; año de 2 cifras; sin año = año actual; "
-            "un solo numero 1-31 = dia en el mes actual."
-        )
-        return
-
-    if hora_ev:
-        try:
-            datetime.strptime(hora_ev, "%H:%M")
-        except ValueError:
-            await update.message.reply_text(
-                f"Hora invalida: {hora_ev}\nUsa formato HH:MM en 24 h (ej. 14:30)"
-            )
-            return
-
-    msg = await update.message.reply_text("Creando evento en el calendario...")
-    ok = crear_evento(nombre, fecha_iso, hora=hora_ev)
-
-    if ok:
-        partes = [f"Evento creado: {nombre}", f"Fecha: {fecha_ev}"]
-        if hora_ev:
-            partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
-        await msg.edit_text("\n".join(partes))
-    else:
-        err = obtener_ultimo_error_evento()
-        await msg.edit_text(
-            "No se pudo crear el evento en CalDAV.\n" + (err or "sin detalle")
-        )
+    await _ejecutar_creacion_evento_desde_texto(update, texto_raw)
 
 
 async def cmd_listeventos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2490,11 +2635,13 @@ async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     hoy = datetime.now().strftime("%Y-%m-%d")
-    reg = añadir_huevo(cantidad, hoy, fuente="telegram")
+    añadir_huevo(cantidad, hoy, fuente="telegram")
+    total_dia = total_cantidad_en_fecha(hoy)
     await update.message.reply_text(
         f"Registro de huevos guardado.\n"
         f"Fecha: {hoy}\n"
-        f"Cantidad: {cantidad}"
+        f"Esta vez: {cantidad}\n"
+        f"Total del dia: {total_dia}"
     )
 
 
@@ -2530,6 +2677,260 @@ async def cmd_listhuevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     cabecera = f"Huevos (ultimos {dias} dias, desde hoy hacia atras):\n\n"
     texto_completo = cabecera + "\n".join(lineas)
     await update.message.reply_text(texto_completo)
+
+
+async def cmd_diario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /diario <texto>\nGuarda una entrada en el diario del dia (y en diario.csv).")
+        return
+    texto = " ".join(context.args).strip()
+    if not texto:
+        await update.message.reply_text("El texto del diario no puede estar vacio.")
+        return
+    usr = update.effective_user
+    etiqueta = (usr.username or str(usr.id)) if usr else ""
+    try:
+        ent = diario_añadir_entrada(texto, fuente="telegram_texto", telegram_user=etiqueta)
+    except ValueError:
+        await update.message.reply_text("El texto del diario no puede estar vacio.")
+        return
+    await update.message.reply_text(
+        f"Entrada de diario guardada.\nDia: {ent.fecha_dia}\nArchivo: {ent.ruta}"
+    )
+
+
+async def cmd_listpendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    items = listar_pendientes_recientes()
+    if not items:
+        await update.message.reply_text("No hay pendientes en pendientes.csv.")
+        return
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_PENDIENTES_IDS] = [p.id for p in items]
+    lineas: list[str] = []
+    for i, p in enumerate(items, 1):
+        res = (p.texto or "").strip() or "(vacio)"
+        if len(res) > PENDIENTE_RESUMEN_LISTA_MAX:
+            res = res[:PENDIENTE_RESUMEN_LISTA_MAX] + "..."
+        u = (p.username or "").strip() or p.user_id
+        lineas.append(f"{i}. [{p.id}] @{u}: {res}")
+    cabecera = f"Pendientes ({len(items)}), mas recientes primero:\n\n"
+    texto_completo = cabecera + "\n\n".join(lineas)
+    if len(texto_completo) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_TELEGRAM_MSG])
+
+
+async def cmd_verpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verpendiente <n|id>\nEl numero es el de /listpendientes en este chat."
+        )
+        return
+    argumento = context.args[0].strip()
+    p: Pendiente | None = None
+    if argumento.isdigit():
+        n = int(argumento)
+        cache = (context.chat_data or {}).get(CACHE_RM_PENDIENTES_IDS) or []
+        if 1 <= n <= len(cache):
+            p = buscar_pendiente_por_id(cache[n - 1])
+    if p is None:
+        p = buscar_pendiente_por_id(argumento)
+    if not p:
+        await update.message.reply_text(
+            "No se encontro ese pendiente.\nUsa /listpendientes en este chat."
+        )
+        return
+    u = (p.username or "").strip() or p.user_id
+    cuerpo = (
+        f"ID: {p.id}\n"
+        f"Usuario: @{u} (id {p.user_id})\n"
+        f"Ingesta: {p.fecha_ingesta}\n"
+        f"Fuente: {p.fuente}\n\n"
+        f"--- Texto ---\n{p.texto or '(vacio)'}"
+    )
+    await _reply_texto_largo(update, cuerpo)
+
+
+async def cmd_rmpendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmpendientes <numero> [numero ...]\n"
+            "Los numeros son los de /listpendientes en este chat."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros and enteros:
+        await update.message.reply_text(
+            "Usa solo numeros del listado separados por espacios, o un solo id."
+        )
+        return
+    ids_objetivo: list[str] = []
+    fuera: list[int] = []
+    if otros:
+        if len(otros) != 1:
+            await update.message.reply_text("Para borrar por id solo se admite un token.")
+            return
+        ids_objetivo = [otros[0].strip()]
+    else:
+        cache = (context.chat_data or {}).get(CACHE_RM_PENDIENTES_IDS) or []
+        vistos: set[str] = set()
+        for n in enteros:
+            if n < 1 or n > len(cache):
+                fuera.append(n)
+                continue
+            tid = cache[n - 1]
+            if tid not in vistos:
+                vistos.add(tid)
+                ids_objetivo.append(tid)
+        if not ids_objetivo:
+            msg = "Ningun numero valido."
+            if fuera:
+                msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listpendientes en este chat."
+            await update.message.reply_text(msg)
+            return
+    ok_n = 0
+    no_encontrados = 0
+    for target_id in ids_objetivo:
+        if eliminar_pendiente_db(target_id):
+            ok_n += 1
+        else:
+            no_encontrados += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_PENDIENTES_IDS, None)
+    partes = [f"Pendientes eliminados: {ok_n}."]
+    if not otros and fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_encontrados:
+        partes.append(f"No encontrados: {no_encontrados}.")
+    await update.message.reply_text(" ".join(partes))
+
+
+async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    args = list(context.args or [])
+    if len(args) < 2:
+        await update.message.reply_text(
+            "Uso: /mvpendiente <n|id> <tipo> [args extra]\n"
+            "tipo: idea, tarea, evento, funcionalidad (o func), investiga, comprar, diario\n"
+            "Ejemplo: /mvpendiente 1 tarea \"Titulo\" 25-03-2026"
+        )
+        return
+    id_o_n = args[0].strip()
+    tipo_in = args[1].strip().lower()
+    extras = args[2:]
+    tipo = "funcionalidad" if tipo_in == "func" else tipo_in
+    if tipo not in _TIPOS_MV_VALIDOS:
+        await update.message.reply_text(
+            f"Tipo no valido: {tipo_in}. Usa: {', '.join(sorted(_TIPOS_MV_VALIDOS))} o func"
+        )
+        return
+
+    p: Pendiente | None = None
+    if id_o_n.isdigit():
+        n = int(id_o_n)
+        cache = (context.chat_data or {}).get(CACHE_RM_PENDIENTES_IDS) or []
+        if 1 <= n <= len(cache):
+            p = buscar_pendiente_por_id(cache[n - 1])
+    if p is None:
+        p = buscar_pendiente_por_id(id_o_n)
+    if not p:
+        await update.message.reply_text(
+            "No se encontro ese pendiente.\nUsa /listpendientes en este chat."
+        )
+        return
+
+    combo = p.texto.strip()
+    if extras:
+        combo = f"{combo} {' '.join(extras)}".strip()
+
+    ok_fin = False
+    if tipo == "idea":
+        idea = _guardar_idea(combo, fuente="telegram_mvpendiente")
+        ok_fin = True
+        await update.message.reply_text(f"Movido a idea.\nResumen: {idea.resumen}")
+    elif tipo == "tarea":
+        if await _ejecutar_creacion_tarea_deck(
+            update, combo, stack_name=None, prefijo_exito="Tarea creada"
+        ):
+            ok_fin = True
+    elif tipo == "comprar":
+        if await _ejecutar_creacion_tarea_deck(
+            update,
+            combo,
+            stack_name=DECK_STACK_COMPRAR,
+            prefijo_exito="Compra anotada",
+        ):
+            ok_fin = True
+    elif tipo == "evento":
+        if await _ejecutar_creacion_evento_desde_texto(update, combo):
+            ok_fin = True
+    elif tipo == "funcionalidad":
+        tf, pri = _parsear_funcionalidad_audio(combo)
+        if not tf.strip():
+            await update.message.reply_text("Texto de funcionalidad vacio.")
+            return
+        func = Funcionalidad(
+            id=_generar_id_func(tf),
+            texto=tf,
+            prioridad=pri,
+            estado="pendiente",
+            fecha_ingesta=datetime.now().isoformat(),
+            fuente="telegram_mvpendiente",
+        )
+        añadir_func(func)
+        ok_fin = True
+        emoji = _PRIORIDAD_EMOJI.get(pri, "")
+        await update.message.reply_text(
+            f"Movido a funcionalidad.\n{tf}\nPrioridad: {emoji} {pri}/5"
+        )
+    elif tipo == "investiga":
+        inv = Investigacion(
+            id=_generar_id_investigacion(combo),
+            fecha=datetime.now().isoformat(),
+            estado="pendiente",
+            concepto=combo,
+            resumen="",
+            link="",
+        )
+        añadir_investigacion(inv)
+        ok_fin = True
+        await update.message.reply_text(
+            f"Movido a investigacion encolada.\nID: {inv.id}\nConcepto: {inv.concepto}"
+        )
+    elif tipo == "diario":
+        usr = update.effective_user
+        etiqueta = (usr.username or str(usr.id)) if usr else ""
+        try:
+            ent = diario_añadir_entrada(
+                combo, fuente="telegram_mvpendiente", telegram_user=etiqueta
+            )
+        except ValueError:
+            await update.message.reply_text("Texto del diario vacio.")
+            return
+        ok_fin = True
+        await update.message.reply_text(
+            f"Movido a diario.\nDia: {ent.fecha_dia}\nArchivo: {ent.ruta}"
+        )
+
+    if ok_fin:
+        eliminar_pendiente_db(p.id)
+        if context.chat_data is not None:
+            context.chat_data.pop(CACHE_RM_PENDIENTES_IDS, None)
 
 
 async def cmd_rmconvo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2840,7 +3241,7 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 
 async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Transcribe audio y enruta según la primera palabra (idea/funcionalidad/fallback)."""
+    """Transcribe audio y enruta según la primera palabra; si no hay acción, pendientes.csv."""
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
@@ -2916,10 +3317,10 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             )
 
         elif accion == "tarea":
-            titulo_t, fecha_t, descripcion_t = _parsear_args_tarea(contenido)
+            titulo_t, fecha_t, descripcion_t = _parsear_tarea_audio_payload(contenido)
             if not titulo_t:
                 await estado.edit_text(
-                    "La tarea no puede estar vacia. Di: tarea <titulo> [fecha DD-MM-AAAA, DD-MM o DD]"
+                    "La tarea no puede estar vacia. Di: tarea <titulo> [para el DD-MM-AAAA ...]"
                 )
                 return
             if fecha_t:
@@ -2928,11 +3329,14 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 except ValueError:
                     await estado.edit_text(
                         f"Fecha invalida en audio: {fecha_t}\n"
-                        "Usa DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
+                        "Tras 'para el': DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
                     )
                     return
             ok = crear_tarea_deck(
-                titulo_t, descripcion=descripcion_t, fecha_due=fecha_t
+                titulo_t,
+                descripcion=descripcion_t,
+                fecha_due=fecha_t,
+                assigned_user_uids=_deck_uids_para_update(update),
             )
             if ok:
                 lineas = [
@@ -2941,6 +3345,9 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]
                 if fecha_t:
                     lineas.append(f"Fecha limite: {fecha_t}")
+                aviso_asg = obtener_ultimo_aviso_asignacion_deck()
+                if aviso_asg:
+                    lineas.append(aviso_asg)
                 await estado.edit_text("\n".join(lineas))
             else:
                 deck_error = obtener_ultimo_error_deck()
@@ -2950,10 +3357,10 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 )
 
         elif accion == "comprar":
-            titulo_c, fecha_c, descripcion_c = _parsear_args_tarea(contenido)
+            titulo_c, fecha_c, descripcion_c = _parsear_tarea_audio_payload(contenido)
             if not titulo_c:
                 await estado.edit_text(
-                    f'La compra no puede estar vacia. Di: comprar <titulo> [fecha]\n'
+                    f'La compra no puede estar vacia. Di: comprar <titulo> [para el fecha]\n'
                     f'(columna Deck "{DECK_STACK_COMPRAR}")'
                 )
                 return
@@ -2963,7 +3370,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 except ValueError:
                     await estado.edit_text(
                         f"Fecha invalida en audio: {fecha_c}\n"
-                        "Usa DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
+                        "Tras 'para el': DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
                     )
                     return
             ok = crear_tarea_deck(
@@ -2971,6 +3378,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 descripcion=descripcion_c,
                 fecha_due=fecha_c,
                 stack_name=DECK_STACK_COMPRAR,
+                assigned_user_uids=_deck_uids_para_update(update),
             )
             if ok:
                 lineas = [
@@ -2979,6 +3387,9 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 ]
                 if fecha_c:
                     lineas.append(f"Fecha limite: {fecha_c}")
+                aviso_asg = obtener_ultimo_aviso_asignacion_deck()
+                if aviso_asg:
+                    lineas.append(aviso_asg)
                 await estado.edit_text("\n".join(lineas))
             else:
                 deck_error = obtener_ultimo_error_deck()
@@ -2988,11 +3399,11 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 )
 
         elif accion == "evento":
-            nombre_ev, fecha_ev, hora_ev = _parsear_args_evento(contenido)
+            nombre_ev, fecha_ev, hora_ev = _parsear_evento_audio_payload(contenido)
             if not fecha_ev:
                 await estado.edit_text(
-                    "El evento necesita una fecha española (ej. 20-03-26, 20-03-2026, 20-03, o solo el dia).\n"
-                    "Opcional HH:MM. Ejemplo: evento reunion 20-03 15:30"
+                    "El evento necesita fecha. Por voz usa: evento <nombre> para el 20-03 [15:30].\n"
+                    "Sin 'para el': nombre y fecha en una frase (ej. reunion 20-03 15:30)."
                 )
                 return
             if not nombre_ev:
@@ -3031,11 +3442,81 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     + (err_ev or "sin detalle")
                 )
 
-        else:
-            idea = _guardar_idea(contenido, fuente="telegram_audio")
+        elif accion == "investiga":
+            if not contenido.strip():
+                await estado.edit_text(
+                    "Di investiga seguido del concepto o frase (ej. investiga paneles solares bifaciales)."
+                )
+                return
+            inv = Investigacion(
+                id=_generar_id_investigacion(contenido.strip()),
+                fecha=datetime.now().isoformat(),
+                estado="pendiente",
+                concepto=contenido.strip(),
+                resumen="",
+                link="",
+            )
+            añadir_investigacion(inv)
             await estado.edit_text(
-                f"Idea guardada desde audio (sin accion detectada).\n"
-                f"Resumen: {idea.resumen}"
+                f"Investigacion encolada desde audio (pendiente).\n"
+                f"ID: {inv.id}\n"
+                f"Concepto: {inv.concepto}"
+            )
+
+        elif accion == "huevos":
+            cant_h = _primer_entero_positivo(contenido)
+            if cant_h is None:
+                await estado.edit_text(
+                    "Di huevos y un numero entero positivo, ej. huevos 12"
+                )
+                return
+            hoy_h = datetime.now().strftime("%Y-%m-%d")
+            añadir_huevo(cant_h, hoy_h, fuente="telegram_audio")
+            total_h = total_cantidad_en_fecha(hoy_h)
+            await estado.edit_text(
+                f"Huevos registrados desde audio.\n"
+                f"Fecha: {hoy_h}\n"
+                f"Esta vez: {cant_h}\n"
+                f"Total del dia: {total_h}"
+            )
+
+        elif accion == "diario":
+            if not contenido.strip():
+                await estado.edit_text("Di diario seguido del texto (o nota) que quieras guardar.")
+                return
+            usr = update.effective_user
+            etiqueta_u = (usr.username or str(usr.id)) if usr else ""
+            try:
+                ent = diario_añadir_entrada(
+                    contenido.strip(),
+                    fuente="telegram_audio",
+                    telegram_user=etiqueta_u,
+                )
+            except ValueError:
+                await estado.edit_text("El texto del diario no puede estar vacio.")
+                return
+            await estado.edit_text(
+                f"Entrada de diario guardada.\n"
+                f"Dia: {ent.fecha_dia}\n"
+                f"Archivo: {ent.ruta}"
+            )
+
+        else:
+            usr = update.effective_user
+            if not usr:
+                await estado.edit_text("No se pudo identificar al usuario de Telegram.")
+                return
+            pend = añadir_pendiente(
+                contenido,
+                user_id=int(usr.id),
+                username=usr.username or "",
+                fuente="telegram_audio",
+            )
+            await estado.edit_text(
+                f"Guardado en pendientes (sin accion reconocida en el audio).\n"
+                f"ID: {pend.id}\n"
+                f"Usa /listpendientes y /mvpendiente <n|id> <tipo> [args extra]\n"
+                f"Tipos: idea, tarea, evento, funcionalidad, func, investiga, comprar, diario"
             )
 
     except Exception as exc:
@@ -3111,6 +3592,11 @@ def main() -> None:
     app.add_handler(CommandHandler("rmtarea", cmd_rmtarea))
     app.add_handler(CommandHandler("huevos", cmd_huevos))
     app.add_handler(CommandHandler("listhuevos", cmd_listhuevos))
+    app.add_handler(CommandHandler("diario", cmd_diario))
+    app.add_handler(CommandHandler("listpendientes", cmd_listpendientes))
+    app.add_handler(CommandHandler("verpendiente", cmd_verpendiente))
+    app.add_handler(CommandHandler("rmpendientes", cmd_rmpendientes))
+    app.add_handler(CommandHandler("mvpendiente", cmd_mvpendiente))
     app.add_handler(CommandHandler("rmconvo", cmd_rmconvo))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))

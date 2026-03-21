@@ -1,6 +1,7 @@
 """
 Carga variables de entorno para el sistema de autoconvocatorias.
 """
+import json
 import os
 import shutil
 from pathlib import Path
@@ -39,6 +40,21 @@ NEXTCLOUD_PASSWORD = os.getenv("NEXTCLOUD_PASSWORD", "")
 NEXTCLOUD_CARPETA = os.getenv("NEXTCLOUD_CARPETA", "Convocatorias")
 DECK_BOARD_NAME = os.getenv("DECK_BOARD_NAME", "MolinoLab").strip()
 DECK_STACK_NAME = os.getenv("DECK_STACK_NAME", "").strip()
+
+# JSON: {"telegram_username_sin_arroba": "nextcloud_uid", ...}
+_deck_assign_raw = os.getenv("DECK_ASSIGNEE_BY_TELEGRAM_USERNAME", "").strip()
+DECK_ASSIGNEE_BY_TELEGRAM_USERNAME: dict[str, str] = {}
+if _deck_assign_raw:
+    try:
+        obj = json.loads(_deck_assign_raw)
+        if isinstance(obj, dict):
+            DECK_ASSIGNEE_BY_TELEGRAM_USERNAME = {
+                str(k).strip().lstrip("@").lower(): str(v).strip()
+                for k, v in obj.items()
+                if str(k).strip() and str(v).strip()
+            }
+    except json.JSONDecodeError:
+        pass
 NEXTCLOUD_IDEAS_PATH = os.getenv(
     "NEXTCLOUD_IDEAS_PATH",
     "Documents/b1tacora/b1tdreamer/Ideas",
@@ -89,6 +105,10 @@ CARPETA_PROYECTOS.mkdir(parents=True, exist_ok=True)
 CSV_INVESTIGACIONES = DATA_DIR / "investigaciones.csv"
 CARPETA_INVESTIGACIONES = DATA_DIR / "investigaciones"
 CARPETA_INVESTIGACIONES.mkdir(parents=True, exist_ok=True)
+CSV_PENDIENTES = DATA_DIR / "pendientes.csv"
+CSV_DIARIO = DATA_DIR / "diario.csv"
+CARPETA_DIARIO = DATA_DIR / "diario"
+CARPETA_DIARIO.mkdir(parents=True, exist_ok=True)
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
