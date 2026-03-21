@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Añadir proyecto al path
@@ -109,6 +109,31 @@ from src.fechas_proyecto import (
 )
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
+from src.fecha_display import (
+    extraer_fecha_relativa_dd_mm_yyyy,
+    fecha_hoy_relativas,
+    formatear_fecha_ver,
+    extraer_fecha_relativa_iso_y_resto,
+    strip_sufijo_para_el,
+)
+from src.db_contabilidad import (
+    CAMPOS_EDITABLES_MOD,
+    FacturaContabilidad,
+    añadir_factura,
+    buscar_por_id as buscar_factura_por_id,
+    eliminar_por_id as eliminar_factura_por_id,
+    listar_recientes_primero as listar_facturas_recientes,
+    actualizar_campos as actualizar_factura_campos,
+    nombre_archivo_seguro,
+)
+from src.extraccion_factura import (
+    extraer_campos_desde_texto,
+    normalizar_fecha_iso,
+    texto_desde_imagen,
+    texto_desde_pdf,
+    trimestre_desde_fecha,
+)
+from src.nextcloud_client import subir_archivo_facturas
 
 # Regex para detectar URLs
 URL_PATTERN = re.compile(
@@ -132,7 +157,10 @@ CACHE_RM_PROYECTOS = "rm_proyecto_ids"
 CACHE_RM_TIEMPOS = "rm_tiempo_ids"
 CACHE_RM_INVESTIGACIONES = "rm_investigacion_ids"
 CACHE_RM_PENDIENTES_IDS = "rm_pendiente_ids"
+CACHE_RM_CONTABILIDAD_IDS = "rm_contabilidad_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
+WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
+ESPERANDO_FACTURA_KEY = "esperando_factura"
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
@@ -407,6 +435,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     texto = (
+        f"ConvocAUTOrias bot v{config.APP_VERSION}\n\n"
         "Comandos por tema (orden sugerido: crear → listar → ver → borrar):\n\n"
         "[Convocatorias]\n"
         "/convo <url> — Añade convocatoria por URL\n"
@@ -463,6 +492,13 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listhuevos [dias] — Resumen hacia atras (6 por defecto)\n\n"
         "[Diario]\n"
         "/diario <texto> — Nota del dia (data/diario/AAAA-MM-DD.md + diario.csv)\n\n"
+        "[Contabilidad / Facturas]\n"
+        "/factura — Luego envia foto o PDF; sube a Nextcloud y fila en contabilidad.csv\n"
+        "/cancelarfactura — Cancela espera de archivo tras /factura\n"
+        "/listcontabilidad — Listado (indice para /verfactura /rmfactura /modfactura)\n"
+        "/verfactura <n|id>\n"
+        "/rmfactura <n ...>\n"
+        "/modfactura <n|id> — Edicion guiada por campo; /cancelarmodfactura para salir\n\n"
         "[Pendientes]\n"
         "Audio sin comando reconocido -> pendientes.csv\n"
         "/listpendientes — Listar (recientes primero)\n"
@@ -475,8 +511,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "huevos, diario. Si no coincide, se guarda en pendientes (no como idea).\n"
         "Por voz, tarea/compra/evento: usa 'para el' antes de la fecha "
         "(ej. tarea comprar pan para el 25-03). Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
-        "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual. "
-        "En tareas tambien YYYY-MM-DD.\n"
+        "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual; "
+        "tambien YYYY-MM-DD; y palabras: antier, ayer, hoy, mañana, pasado (pasado mañana).\n"
         "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
         "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
         "/ayuda — Esta lista"
@@ -578,7 +614,8 @@ def _formatear_convocatoria(conv: Convocatoria, *, recortar_descripcion: bool = 
         f"Plazo: {plazo}\n\n"
         f"Requisitos: {requisitos}\n\n"
         f"Descripcion:\n{descripcion}\n\n"
-        f"(Fuente: {conv.fuente} | Ingesta: {conv.fecha_ingesta})"
+        f"Fuente: {conv.fuente}\n"
+        f"Fecha: {formatear_fecha_ver(conv.fecha_ingesta)}"
     )
 
 
@@ -675,7 +712,7 @@ def _formatear_idea_completa(idea: Idea, cuerpo_md: str) -> str:
         f"Tags: {idea.tags or '(ninguno)'}\n"
         f"Categorias: {idea.categorias or '(ninguna)'}\n"
         f"Presupuesto aprox.: {idea.presupuesto_aproximado or '(no indicado)'}\n"
-        f"Fecha ingesta: {idea.fecha_ingesta}\n"
+        f"Fecha: {formatear_fecha_ver(idea.fecha_ingesta)}\n"
         f"Fuente: {idea.fuente}\n\n"
         f"--- Contenido ---\n{cuerpo}"
     )
@@ -943,16 +980,19 @@ def _formatear_proyecto_lista(p: Proyecto) -> str:
 
 
 def _formatear_proyecto_completo(p: Proyecto, cuerpo_md: str) -> str:
-    ff = p.fecha_fin.strip() or "(sin fecha fin)"
+    fc = (p.fecha_creacion or "").strip()
+    fc_show = formatear_fecha_ver(fc) if fc else "(sin fecha)"
+    ff = (p.fecha_fin or "").strip()
+    ff_show = formatear_fecha_ver(ff) if ff else "(sin fecha fin)"
     pres = p.presupuesto.strip() or "(no indicado)"
     return (
         f"Titulo: {p.titulo}\n"
-        f"Fecha creacion: {p.fecha_creacion}\n"
+        f"Fecha creacion: {fc_show}\n"
         f"Contacto: {p.persona_contacto}\n"
         f"Email: {p.email_contacto}\n"
         f"Presupuesto: {pres}\n"
         f"Tiempo total: {formatear_minutos_como_texto(tiempo_total_minutos(p))}\n"
-        f"Fecha fin: {ff}\n"
+        f"Fecha fin: {ff_show}\n"
         f"Estado: {p.estado}\n"
         f"Fuente: {p.fuente}\n\n"
         f"Descripcion / notas:\n{cuerpo_md.strip() or '(vacio)'}"
@@ -1472,12 +1512,13 @@ async def cmd_vertiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     p = buscar_proyecto_por_id(t.id_proyecto)
     tit = p.titulo if p else t.id_proyecto
-    fin_txt = t.fecha_hora_fin.strip() or "(activo)"
+    fin_raw = t.fecha_hora_fin.strip()
+    fin_txt = formatear_fecha_ver(fin_raw) if fin_raw else "(activo)"
     cant = t.cantidad_tiempo.strip() or ("—" if es_activo(t) else "0")
     body = (
         f"Proyecto: {tit}\n"
         f"ID tiempo: {t.id}\n"
-        f"Inicio: {t.fecha_hora_inicio}\n"
+        f"Inicio: {formatear_fecha_ver(t.fecha_hora_inicio)}\n"
         f"Fin: {fin_txt}\n"
         f"Minutos: {cant}\n"
     )
@@ -1551,7 +1592,7 @@ def _parsear_funcionalidad_audio(contenido: str) -> tuple[str, int]:
             texto = texto[: m2.start()].strip()
             prioridad = int(m2.group(1))
 
-    return texto.strip(), prioridad
+    return strip_sufijo_para_el(texto.strip()), prioridad
 
 
 async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1657,7 +1698,7 @@ def _leer_cuerpo_md_investigacion(inv_id: str) -> str | None:
 def _formatear_investigacion_completa(inv: Investigacion) -> str:
     bloque_csv = (
         f"ID: {inv.id}\n"
-        f"Fecha: {inv.fecha}\n"
+        f"Fecha: {formatear_fecha_ver(inv.fecha)}\n"
         f"Estado: {inv.estado}\n"
         f"Concepto: {inv.concepto}\n"
         f"Resumen: {inv.resumen or '(vacío)'}\n"
@@ -1840,7 +1881,7 @@ def _formatear_funcionalidad_completa(f: Funcionalidad) -> str:
     emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
     return (
         f"Prioridad: {emoji} {f.prioridad}/5\n"
-        f"Fecha ingesta: {f.fecha_ingesta}\n"
+        f"Fecha: {formatear_fecha_ver(f.fecha_ingesta)}\n"
         f"Fuente: {f.fuente}\n\n"
         f"Texto:\n{f.texto}"
     )
@@ -1899,6 +1940,10 @@ def _extraer_fecha_iso_y_resto(texto: str) -> tuple[str | None, str]:
     if not texto:
         return None, texto
 
+    iso_rel, resto_rel = extraer_fecha_relativa_iso_y_resto(texto)
+    if iso_rel:
+        return iso_rel, resto_rel
+
     fecha_dmY, resto = _extraer_fecha_formato_espanol(texto)
     if fecha_dmY:
         iso = _fecha_evento_ddmmyyyy_a_iso(fecha_dmY)
@@ -1933,6 +1978,10 @@ def _extraer_fecha_formato_espanol(texto: str) -> tuple[str | None, str]:
     - Solo DD (1-31) si hay un único candidato en el texto -> mes y año actuales
     Separadores / o -.
     """
+    rel, resto_rel = extraer_fecha_relativa_dd_mm_yyyy(texto)
+    if rel:
+        return rel, resto_rel
+
     now = datetime.now()
     sep = r"[/-]"
 
@@ -2040,8 +2089,9 @@ def _parsear_tarea_audio_payload(contenido: str) -> tuple[str, str | None, str]:
             (resto_tras_fecha or "").strip() if resto_tras_fecha else "",
         ]
         descripcion = " ".join(x for x in partes_desc if x).strip()
-        return titulo.strip(), fecha, descripcion
-    return _parsear_args_tarea(contenido)
+        return strip_sufijo_para_el(titulo.strip()), fecha, descripcion
+    tit, fec, desc = _parsear_args_tarea(contenido)
+    return strip_sufijo_para_el(tit), fec, desc
 
 
 def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
@@ -2075,8 +2125,11 @@ def _parsear_evento_audio_payload(contenido: str) -> tuple[str, str | None, str 
     if despues.strip():
         n2, fecha_ev, hora_ev = _parsear_args_evento(despues)
         nombre = (antes.strip() or n2.strip()).strip()
-        return nombre, fecha_ev, hora_ev
-    return _parsear_args_evento(contenido)
+        return strip_sufijo_para_el(nombre), fecha_ev, hora_ev
+    nom, fe, ho = _parsear_args_evento(contenido)
+    if not fe:
+        nom = strip_sufijo_para_el(nom)
+    return nom, fe, ho
 
 
 async def _ejecutar_creacion_tarea_deck(
@@ -2143,9 +2196,9 @@ async def cmd_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not texto_raw:
         await update.message.reply_text(
-            'Uso: /tarea "Titulo" [DD-MM-AAAA | DD-MM | DD | YYYY-MM-DD] ["Descripcion"]\n'
+            'Uso: /tarea "Titulo" [fecha] ["Descripcion"]\n'
             'Ejemplo: /tarea "Comprar material" 25-03-2026 "Para laboratorio"\n'
-            "Formato español: dia-mes-año; sin año = año actual; solo dia = mes actual.\n"
+            "Fecha: DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD, o antier/ayer/hoy/mañana/pasado.\n"
             "La fecha y descripcion son opcionales."
         )
         return
@@ -2171,7 +2224,7 @@ async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             f'Uso: /comprar "Titulo" [fecha] ["Descripcion"] — igual que /tarea pero en la '
             f'columna "{DECK_STACK_COMPRAR}".\n'
-            "Fecha: DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD (opcional)."
+            "Fecha: DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD o antier/ayer/hoy/mañana/pasado (opcional)."
         )
         return
 
@@ -2192,7 +2245,8 @@ async def _ejecutar_creacion_evento_desde_texto(update: Update, texto_raw: str) 
         return False
     if not fecha_ev:
         await update.message.reply_text(
-            "Falta una fecha reconocible (ej. 20-03-2026, 20-03, 20/3/26, o solo el dia 15 si es el unico numero 1-31)."
+            "Falta una fecha reconocible (ej. 20-03-2026, 20-03, 20/3/26, dia unico 1-31, "
+            "o antier/ayer/hoy/mañana/pasado)."
         )
         return False
 
@@ -2240,9 +2294,9 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not texto_raw:
         await update.message.reply_text(
             "Uso: /evento <nombre> <fecha> [HH:MM]\n"
-            "Fecha (español, dia-mes): DD-MM-AAAA o DD/MM/AAAA; año 2 cifras -> 20YY; "
-            "DD-MM sin año = año actual; solo DD (1-31, unico en el texto) = mes y año actuales.\n"
-            "Separadores / o -. Ejemplo: /evento Reunion 20-03-26 14:30"
+            "Fecha: DD-MM-AAAA o DD/MM/AAAA; año 2 cifras -> 20YY; DD-MM sin año = año actual; "
+            "solo DD (1-31, unico en el texto) = mes actual; o antier/ayer/hoy/mañana/pasado.\n"
+            "Ejemplo: /evento Reunion 20-03-26 14:30"
         )
         return
 
@@ -2754,7 +2808,7 @@ async def cmd_verpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     cuerpo = (
         f"ID: {p.id}\n"
         f"Usuario: @{u} (id {p.user_id})\n"
-        f"Ingesta: {p.fecha_ingesta}\n"
+        f"Fecha: {formatear_fecha_ver(p.fecha_ingesta)}\n"
         f"Fuente: {p.fuente}\n\n"
         f"--- Texto ---\n{p.texto or '(vacio)'}"
     )
@@ -3053,7 +3107,7 @@ def _formatear_enlace_completo(enlace: Enlace) -> str:
         f"Tags: {enlace.tags or '(ninguno)'}\n"
         f"Categorias: {enlace.categorias or '(ninguna)'}\n"
         f"Notas: {enlace.notas or '(ninguna)'}\n"
-        f"Fecha ingesta: {enlace.fecha_ingesta}\n"
+        f"Fecha: {formatear_fecha_ver(enlace.fecha_ingesta)}\n"
         f"Fuente: {enlace.fuente}"
     )
 
@@ -3222,10 +3276,365 @@ async def cmd_rmurl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(" ".join(partes))
 
 
+CONTABILIDAD_RESUMEN_LISTA_MAX = 52
+
+
+def _formatear_factura_completa(f: FacturaContabilidad) -> str:
+    ff = (f.fecha_factura or "").strip()
+    ff_disp = formatear_fecha_ver(ff) if ff else "(sin fecha)"
+    fs = (f.fecha_subida or "").strip()
+    fs_disp = formatear_fecha_ver(fs) if fs else "(sin fecha subida)"
+    return (
+        f"ID: {f.id}\n"
+        f"Numero factura: {f.numero_factura or '(vacio)'}\n"
+        f"Fecha factura: {ff_disp}\n"
+        f"Proveedor: {f.nombre_proveedor or '(vacio)'}\n"
+        f"CIF: {f.cif_proveedor or '(vacio)'}\n"
+        f"Direccion: {f.direccion_proveedor or '(vacio)'}\n"
+        f"Base: {f.base_imponible or '(vacio)'}\n"
+        f"IVA: {f.iva or '(vacio)'}\n"
+        f"Total: {f.total or '(vacio)'}\n"
+        f"Ruta Nextcloud: {f.ruta_nextcloud or '(vacio)'}\n"
+        f"Fecha subida: {fs_disp}\n"
+        f"Fuente: {f.fuente or '(vacio)'}"
+    )
+
+
+def _texto_menu_mod_factura(factura_id: str) -> str:
+    lineas = [
+        f"Modificando factura (id {factura_id}). Elige campo (0 = salir):",
+    ]
+    for i, (_k, label) in enumerate(CAMPOS_EDITABLES_MOD, 1):
+        lineas.append(f"{i}. {label}")
+    return "\n".join(lineas)
+
+
+async def _manejar_wizard_mod_factura(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    wizard = context.chat_data.get(WIZARD_MOD_FACTURA_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or wizard.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        return False
+    fid = wizard["factura_id"]
+    fase = wizard.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_FACTURA_KEY, None)
+            await update.message.reply_text("Listo (sin mas cambios).")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Envia un numero de campo o 0 para salir.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_EDITABLES_MOD):
+            await update.message.reply_text("Numero invalido.")
+            return True
+        key, label = CAMPOS_EDITABLES_MOD[n - 1]
+        wizard["fase"] = "valor"
+        wizard["campo_key"] = key
+        await update.message.reply_text(
+            f"Nuevo valor para: {label}\n"
+            f"(una linea; envia '-' para dejar vacio)\n/cancelarmodfactura para abortar."
+        )
+        return True
+
+    key = wizard.get("campo_key")
+    if not key:
+        wizard["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_factura(fid))
+        return True
+    val = "" if text == "-" else text
+    if not actualizar_factura_campos(fid, {key: val}):
+        await update.message.reply_text("No se pudo guardar (id invalido?).")
+        context.chat_data.pop(WIZARD_MOD_FACTURA_KEY, None)
+        return True
+    wizard["fase"] = "menu"
+    wizard.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_factura(fid)
+    )
+    return True
+
+
+async def cmd_factura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is None:
+        await update.message.reply_text("No se pudo guardar estado en este chat.")
+        return
+    context.chat_data[ESPERANDO_FACTURA_KEY] = True
+    await update.message.reply_text(
+        "Envia una foto de la factura o un documento PDF. "
+        "Se subira a Nextcloud y se registrara en contabilidad.csv.\n"
+        "/cancelarfactura si cambias de idea."
+    )
+
+
+async def cmd_cancelarfactura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(ESPERANDO_FACTURA_KEY, None)
+    await update.message.reply_text("Cancelado: ya no espero archivo de factura.")
+
+
+async def cmd_cancelarmodfactura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_FACTURA_KEY, None)
+    await update.message.reply_text("Edicion de factura cancelada.")
+
+
+async def manejar_archivo_factura(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    msg = update.message
+    if not msg or context.chat_data is None:
+        return
+    if not context.chat_data.get(ESPERANDO_FACTURA_KEY):
+        return
+
+    archivo = None
+    sufijo = ".bin"
+    nombre_sugerido: str | None = None
+
+    if msg.photo:
+        archivo = await context.bot.get_file(msg.photo[-1].file_id)
+        sufijo = ".jpg"
+        nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    elif msg.document:
+        mime = (msg.document.mime_type or "").lower()
+        if "pdf" not in mime:
+            await msg.reply_text("Solo se acepta PDF o imagen (foto).")
+            return
+        archivo = await context.bot.get_file(msg.document.file_id)
+        sufijo = ".pdf"
+        raw_name = (msg.document.file_name or "").strip()
+        nombre_sugerido = raw_name if raw_name.lower().endswith(".pdf") else None
+        if not nombre_sugerido:
+            nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    else:
+        return
+
+    context.chat_data[ESPERANDO_FACTURA_KEY] = False
+    estado = await msg.reply_text("Descargando y procesando factura...")
+    ruta_tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=sufijo) as tmp:
+            ruta_tmp = Path(tmp.name)
+        await archivo.download_to_drive(custom_path=str(ruta_tmp))
+        data = ruta_tmp.read_bytes()
+
+        texto_plano = ""
+        if sufijo == ".pdf":
+            texto_plano = texto_desde_pdf(data)
+        else:
+            texto_plano = texto_desde_imagen(data)
+
+        campos = extraer_campos_desde_texto(texto_plano)
+        fecha_norm = normalizar_fecha_iso(campos.get("fecha_factura") or "")
+        if fecha_norm:
+            d_parts = fecha_norm.split("-")
+            y, mo, da = int(d_parts[0]), int(d_parts[1]), int(d_parts[2])
+            d = date(y, mo, da)
+        else:
+            d = fecha_hoy_relativas()
+        tq = trimestre_desde_fecha(d.year, d.month)
+        nombre_nc = nombre_archivo_seguro(nombre_sugerido or f"factura{sufijo}")
+        rel_nc = f"{d.year}/Gastos/{tq}/{nombre_nc}"
+        ok_up = subir_archivo_facturas(rel_nc, data)
+        ruta_completa = (
+            f"{config.NEXTCLOUD_FACTURAS_PATH}/{rel_nc}" if ok_up else ""
+        )
+        fecha_subida = datetime.now().isoformat()
+        row = añadir_factura(
+            numero_factura=campos.get("numero_factura") or "",
+            fecha_factura=fecha_norm or "",
+            nombre_proveedor=campos.get("nombre_proveedor") or "",
+            cif_proveedor=campos.get("cif_proveedor") or "",
+            direccion_proveedor=campos.get("direccion_proveedor") or "",
+            base_imponible=campos.get("base_imponible") or "",
+            iva=campos.get("iva") or "",
+            total=campos.get("total") or "",
+            ruta_nextcloud=ruta_completa,
+            fecha_subida=fecha_subida,
+            fuente="telegram_factura",
+        )
+        lineas = [
+            f"Factura registrada (id {row.id}).",
+            f"CSV: contabilidad.csv",
+        ]
+        if ok_up:
+            lineas.append(f"Nextcloud: {ruta_completa}")
+        else:
+            lineas.append(
+                "Aviso: no se pudo subir a Nextcloud (revisa URL/usuario/clave y ruta)."
+            )
+        lineas.append("")
+        lineas.append("Datos extraidos (revisa con /modfactura si hace falta):")
+        lineas.append(_formatear_factura_completa(row))
+        await estado.edit_text("\n".join(lineas)[:MAX_TELEGRAM_MSG])
+    except Exception as exc:
+        await estado.edit_text(f"No se pudo procesar la factura: {exc}")
+    finally:
+        if ruta_tmp and ruta_tmp.exists():
+            try:
+                ruta_tmp.unlink()
+            except OSError:
+                pass
+
+
+async def cmd_listcontabilidad(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    todas = listar_facturas_recientes()
+    if not todas:
+        await update.message.reply_text("No hay filas en contabilidad.csv.")
+        return
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_CONTABILIDAD_IDS] = [x.id for x in todas]
+    lineas: list[str] = []
+    for i, r in enumerate(todas, 1):
+        prov = (r.nombre_proveedor or "(sin proveedor)")[:CONTABILIDAD_RESUMEN_LISTA_MAX]
+        num = (r.numero_factura or "?")[:20]
+        lineas.append(f"{i}. [{num}] {prov}")
+    texto = f"Contabilidad ({len(todas)}), recientes primero:\n\n" + "\n".join(lineas)
+    if len(texto) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto)
+    else:
+        await update.message.reply_text(texto[:MAX_TELEGRAM_MSG])
+
+
+async def cmd_verfactura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verfactura <n|id>\nEl numero es el de /listcontabilidad en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    frow: FacturaContabilidad | None = None
+    if arg.isdigit():
+        n = int(arg)
+        cache = (context.chat_data or {}).get(CACHE_RM_CONTABILIDAD_IDS) or []
+        if 1 <= n <= len(cache):
+            frow = buscar_factura_por_id(cache[n - 1])
+    if frow is None:
+        frow = buscar_factura_por_id(arg)
+    if not frow:
+        await update.message.reply_text(
+            "No se encontro esa factura.\nUsa /listcontabilidad en este chat."
+        )
+        return
+    await _reply_texto_largo(update, _formatear_factura_completa(frow))
+
+
+async def cmd_rmfactura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmfactura <n> [n ...]\nLos numeros son los de /listcontabilidad en este chat."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text(
+            "Solo numeros del listado, separados por espacios."
+        )
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_CONTABILIDAD_IDS) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        fid = cache[n - 1]
+        if fid not in vistos:
+            vistos.add(fid)
+            ids_objetivo.append(fid)
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}."
+        await update.message.reply_text(msg)
+        return
+    ok_n = 0
+    for fid in ids_objetivo:
+        if eliminar_factura_por_id(fid):
+            ok_n += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_CONTABILIDAD_IDS, None)
+    partes = [f"Filas eliminadas de contabilidad: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados: {sorted(set(fuera))}.")
+    await update.message.reply_text(" ".join(partes))
+
+
+async def cmd_modfactura(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modfactura <n|id>\nEl numero es el de /listcontabilidad en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    frow: FacturaContabilidad | None = None
+    if arg.isdigit():
+        n = int(arg)
+        cache = (context.chat_data or {}).get(CACHE_RM_CONTABILIDAD_IDS) or []
+        if 1 <= n <= len(cache):
+            frow = buscar_factura_por_id(cache[n - 1])
+    if frow is None:
+        frow = buscar_factura_por_id(arg)
+    if not frow:
+        await update.message.reply_text(
+            "No se encontro esa factura.\nUsa /listcontabilidad en este chat."
+        )
+        return
+    user = update.effective_user
+    if not user:
+        return
+    context.chat_data[WIZARD_MOD_FACTURA_KEY] = {
+        "user_id": user.id,
+        "factura_id": frow.id,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_factura(frow.id) + "\n\n/cancelarmodfactura para salir."
+    )
+
+
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Si el mensaje contiene una URL suelta, la guarda como enlace sin categorizar."""
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
+        return
+    if await _manejar_wizard_mod_factura(update, context):
         return
     if await _manejar_wizard_proyecto(update, context):
         return
@@ -3598,11 +4007,26 @@ def main() -> None:
     app.add_handler(CommandHandler("rmpendientes", cmd_rmpendientes))
     app.add_handler(CommandHandler("mvpendiente", cmd_mvpendiente))
     app.add_handler(CommandHandler("rmconvo", cmd_rmconvo))
+    app.add_handler(CommandHandler("factura", cmd_factura))
+    app.add_handler(CommandHandler("cancelarfactura", cmd_cancelarfactura))
+    app.add_handler(CommandHandler("cancelarmodfactura", cmd_cancelarmodfactura))
+    app.add_handler(CommandHandler("listcontabilidad", cmd_listcontabilidad))
+    app.add_handler(CommandHandler("verfactura", cmd_verfactura))
+    app.add_handler(CommandHandler("rmfactura", cmd_rmfactura))
+    app.add_handler(CommandHandler("modfactura", cmd_modfactura))
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.Document.MimeType("application/pdf"),
+            manejar_archivo_factura,
+        )
+    )
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, manejar_mensaje))
     app.add_error_handler(error_handler)
 
-    print("Bot iniciado. Pulsa Ctrl+C para detener.")
+    print(
+        f"ConvocAUTOrias bot v{config.APP_VERSION} iniciado. Pulsa Ctrl+C para detener."
+    )
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
