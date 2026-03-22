@@ -148,7 +148,9 @@ DATA_DIR=data
 NEXTCLOUD_URL=https://tu-nextcloud.com
 NEXTCLOUD_USER=tu_usuario
 NEXTCLOUD_PASSWORD=tu_password
-# Base del vault (Obsidian). Por defecto: Documents/b1tacora/b1tdreamer
+# Base del vault (Obsidian), ruta bajo el usuario de arriba (p. ej. bot).
+# Si el vault está en otra cuenta: comparte la carpeta con ese usuario y usa aquí el path
+# que ves al entrar como bot en Archivos (ej. b1tacora/b1tdreamer), no el enlace /f/...
 # NEXTCLOUD_VAULT_BASE=Documents/b1tacora/b1tdreamer
 # Rutas completas por categoría (opcional; si no las pones, se cuelgan del vault):
 # Convocatorias, Ideas, Facturas, Proyectos, Investigaciones, Memorias, Datos (CSVs)
@@ -178,6 +180,10 @@ CALDAV_CALENDAR_NAME=MolinoLab
 ### Sincronización opcional hacia Nextcloud (WebDAV)
 
 Desde la raíz del proyecto: `python scripts/sync_nextcloud_datos.py`. Coloca los CSV en `{vault}/Datos/` y los `.md` en `{vault}/Ideas/`, `Proyectos/`, `Investigaciones/` y `Memorias/` (según `NEXTCLOUD_VAULT_BASE` y las variables `NEXTCLOUD_*_PATH` en `config.py`).
+
+**Vault en la cuenta de b1tdreamer y usuario WebDAV `bot`:** en Nextcloud, como b1tdreamer, comparte la carpeta del vault (o la subcarpeta donde quieras `Ideas/`, `Datos/`, etc.) con el usuario `bot`, con permisos de edición. Cierra sesión y entra como `bot` → Archivos: anota la ruta desde la raíz de “Todos los archivos” hasta esa carpeta (segmentos de la ruta, sin dominio). Esa cadena es el valor de `NEXTCLOUD_VAULT_BASE`. El cliente construye URLs del estilo `/remote.php/dav/files/bot/<NEXTCLOUD_VAULT_BASE>/Ideas/...`; un enlace interno tipo `https://…/f/2343` no sirve como sustituto de esa ruta.
+
+**Errores en el registro de Nextcloud** (`app_api` / `localhost:8780`, `richdocuments` 404, `notes` “Undefined array key node”): son de otras apps (Ex-Apps proxy, Collabora/OnlyOffice, Notes). No son la causa de que falle la subida WebDAV de ConvocAUTOrias; puedes tratarlos aparte en la administración del servidor.
 
 ## Arquitectura Docker
 
@@ -234,7 +240,7 @@ Flujo diario de ideas manuales:
 
 Sincronizacion con Nextcloud:
 - El workflow `05-sync-nextcloud-datos.json` llama al endpoint `POST /sync-nextcloud-datos`.
-- Sube `data/convocatorias.csv`, `data/ideas.csv`, `data/enlaces.csv` (si existe) y los ficheros de `data/ideas/` a `Documents/b1tacora/b1tdreamer/Ideas`.
+- Sube `data/convocatorias.csv`, `data/ideas.csv`, `data/enlaces.csv` (si existe) y los ficheros de `data/ideas/` a `{NEXTCLOUD_VAULT_BASE}/Ideas` (y el resto de categorías según `config.py`).
 
 ## OpenClaw (asistente conversacional)
 
