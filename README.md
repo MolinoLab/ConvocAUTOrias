@@ -119,6 +119,8 @@ N8N_PASSWORD=contraseña_segura_para_admin
 # Telegram
 TELEGRAM_BOT_TOKEN=tu_token
 TELEGRAM_CHAT_ID=tu_chat_id
+# Chats extra para recordatorios agenda (mañana / semana), separados por coma
+# TELEGRAM_NOTIFY_CHAT_IDS=id2,id3
 TELEGRAM_ALLOWLIST=@b1tdreamer
 # Usuarios sin @username en Telegram: añade su ID numérico separado por comas, p. ej.:
 # TELEGRAM_ALLOWLIST=@yo,5088114697
@@ -167,8 +169,8 @@ DECK_BOARD_NAME=MolinoLab
 CALDAV_URL=https://tu-nextcloud.com/remote.php/dav
 CALDAV_USER=tu_usuario
 CALDAV_PASS=tu_password
-# Nombre del calendario (se compara con el segmento de la URL, ej. .../calendars/usuario/molinolab/)
-# No uses coincidencia en la URL completa: un dominio como hub.molinolab.org contiene "molinolab".
+# Nombre(s) del calendario (slug en URL o nombre mostrado). Varios: MolinoLab, Personal
+# Deja vacío solo si quieres considerar todos los calendarios de la cuenta.
 CALDAV_CALENDAR_NAME=MolinoLab
 # Opcional: URL exacta de la colección del calendario (sustituye al filtro por nombre)
 # CALDAV_CALENDAR_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/molinolab/

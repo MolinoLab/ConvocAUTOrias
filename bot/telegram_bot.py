@@ -59,6 +59,7 @@ from src.db_enlaces import (
     eliminar_enlace_por_id,
     leer_enlaces,
 )
+from src.agenda_resumen import texto_agenda_proximos_dias
 from src.caldav_client import (
     borrar_evento_por_url,
     crear_evento,
@@ -117,6 +118,7 @@ from src.fechas_proyecto import (
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 from src.fecha_display import (
+    extraer_fecha_natural_dd_mm_yyyy_y_resto,
     extraer_fecha_relativa_dd_mm_yyyy,
     fecha_hoy_relativas,
     formatear_fecha_ver,
@@ -517,6 +519,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Eventos CalDAV]\n"
         "/evento <nombre> <fecha> [HH:MM] — Crear (1 h si hay hora)\n"
         "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
+        "/informame — Eventos y tareas (Deck + VTODO) en los proximos 7 dias\n"
         "/verevento <numero>\n"
         "/rmevento <num ...>\n\n"
         "[Huevos]\n"
@@ -544,7 +547,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Por voz, tarea/compra/evento: usa 'para el' antes de la fecha "
         "(ej. tarea comprar pan para el 25-03). Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
         "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual; "
-        "tambien YYYY-MM-DD; y palabras: antier, ayer, hoy, mañana, pasado (pasado mañana).\n"
+        "tambien YYYY-MM-DD; palabras: antier, ayer, hoy, mañana, pasado (pasado mañana); "
+        "y en español: 12 de febrero de 2026, 12 del 2 del 2026, 3 de marzo.\n"
         "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
         "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
         "/ayuda — Esta lista"
@@ -1783,7 +1787,9 @@ def _generar_id_investigacion(texto: str) -> str:
     return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
 
-def _nueva_investigacion_pendiente(concepto: str) -> Investigacion:
+def _nueva_investigacion_pendiente(
+    concepto: str, telegram_chat_id: str = ""
+) -> Investigacion:
     from src.slug_archivo_md import elegir_path_md_unico, texto_a_slug_palabras
 
     c = concepto.strip()
@@ -1799,6 +1805,7 @@ def _nueva_investigacion_pendiente(concepto: str) -> Investigacion:
         resumen="",
         link="",
         archivo=p.name,
+        telegram_chat_id=(telegram_chat_id or "").strip(),
     )
 
 
@@ -1926,7 +1933,8 @@ async def cmd_investiga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not concepto:
         await update.message.reply_text("El concepto no puede estar vacío.")
         return
-    inv = _nueva_investigacion_pendiente(concepto)
+    cid = str(update.effective_chat.id) if update.effective_chat else ""
+    inv = _nueva_investigacion_pendiente(concepto, telegram_chat_id=cid)
     añadir_investigacion(inv)
     await update.message.reply_text(
         f"Investigación encolada (pendiente).\n"
@@ -1961,6 +1969,7 @@ def _formatear_investigacion_completa(inv: Investigacion) -> str:
         f"Concepto: {inv.concepto}\n"
         f"Resumen: {inv.resumen or '(vacío)'}\n"
         f"Link: {inv.link or '(vacío)'}\n"
+        f"Chat Telegram: {inv.telegram_chat_id or '(no guardado)'}\n"
     )
     md = _leer_cuerpo_md_investigacion(inv)
     if md is None:
@@ -2244,6 +2253,10 @@ def _extraer_fecha_formato_espanol(texto: str) -> tuple[str | None, str]:
     rel, resto_rel = extraer_fecha_relativa_dd_mm_yyyy(texto)
     if rel:
         return rel, resto_rel
+
+    nat, resto_nat = extraer_fecha_natural_dd_mm_yyyy_y_resto(texto)
+    if nat:
+        return nat, resto_nat
 
     now = datetime.now()
     sep = r"[/-]"
@@ -2600,6 +2613,16 @@ async def cmd_listeventos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await msg.edit_text(texto_completo[:MAX_MSG])
         await update.message.reply_text(texto_completo[MAX_MSG:])
+
+
+async def cmd_informame(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    msg = await update.message.reply_text("Consultando agenda (7 dias)...")
+    texto = texto_agenda_proximos_dias(7)
+    await msg.delete()
+    await _reply_texto_largo(update, texto)
 
 
 async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3220,7 +3243,8 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"Movido a funcionalidad.\n{tf}\nPrioridad: {emoji} {pri}/5"
         )
     elif tipo == "investiga":
-        inv = _nueva_investigacion_pendiente(combo)
+        cid = str(update.effective_chat.id) if update.effective_chat else ""
+        inv = _nueva_investigacion_pendiente(combo, telegram_chat_id=cid)
         añadir_investigacion(inv)
         ok_fin = True
         await update.message.reply_text(
@@ -4126,7 +4150,10 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     "Di investiga seguido del concepto o frase (ej. investiga paneles solares bifaciales)."
                 )
                 return
-            inv = _nueva_investigacion_pendiente(contenido.strip())
+            cid = str(update.effective_chat.id) if update.effective_chat else ""
+            inv = _nueva_investigacion_pendiente(
+                contenido.strip(), telegram_chat_id=cid
+            )
             añadir_investigacion(inv)
             await estado.edit_text(
                 f"Investigacion encolada desde audio (pendiente).\n"
@@ -4261,6 +4288,7 @@ def main() -> None:
     app.add_handler(CommandHandler("comprar", cmd_comprar))
     app.add_handler(CommandHandler("evento", cmd_evento))
     app.add_handler(CommandHandler("listeventos", cmd_listeventos))
+    app.add_handler(CommandHandler("informame", cmd_informame))
     app.add_handler(CommandHandler("verevento", cmd_verevento))
     app.add_handler(CommandHandler("rmevento", cmd_rmevento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))

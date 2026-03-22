@@ -101,9 +101,16 @@ def _mensaje_telegram(inv: Investigacion) -> str:
     )[:4000]
 
 
+def _marcar_error(inv: Investigacion, mensaje: str) -> None:
+    inv.estado = "error"
+    inv.resumen = (mensaje or "").strip()[:2000]
+    actualizar(inv)
+
+
 def _notificar_y_actualizar(inv: Investigacion) -> None:
     time.sleep(config.INVESTIGACION_SLEEP_SEC)
-    if enviar_mensaje(_mensaje_telegram(inv)):
+    cid = (inv.telegram_chat_id or "").strip() or None
+    if enviar_mensaje(_mensaje_telegram(inv), chat_id=cid):
         inv.estado = "enviado"
     else:
         inv.estado = "investigado"
@@ -121,6 +128,10 @@ def _procesar_completo(inv: Investigacion) -> None:
             "(pip install duckduckgo-search) para obtener resultados.",
             flush=True,
         )
+        _marcar_error(
+            inv,
+            "Sin buscador: define SEARXNG_URL o instala duckduckgo-search en el entorno.",
+        )
         return
 
     fuentes = buscar_fuentes(inv.concepto)
@@ -128,10 +139,12 @@ def _procesar_completo(inv: Investigacion) -> None:
 
     if not fuentes:
         print(f"Sin fuentes para id={inv.id} concepto={inv.concepto!r}", flush=True)
+        _marcar_error(inv, "Sin resultados de busqueda web para este concepto.")
         return
 
     urls = [f["url"] for f in fuentes if f.get("url")]
     if not urls:
+        _marcar_error(inv, "La busqueda no devolvio URLs utilizables.")
         return
 
     bloque = fuentes_a_texto(fuentes)
@@ -154,6 +167,10 @@ def _procesar_completo(inv: Investigacion) -> None:
     parsed = _llamada_ollama(inv.concepto, bloque, permitidas)
     if not parsed:
         print(f"Ollama no devolvió JSON util id={inv.id}", flush=True)
+        _marcar_error(
+            inv,
+            "Ollama no devolvio JSON valido (revisa modelo y TIMEOUT_OLLAMA_INVESTIGACION).",
+        )
         return
 
     resumen = str(parsed.get("resumen", "")).strip()

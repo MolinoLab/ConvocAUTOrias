@@ -101,6 +101,38 @@ def _matches_calendar_live_display_name(cal, name: str) -> bool:
     return _norm_calendar_token(str(dn)) == _norm_calendar_token(name)
 
 
+def _etiqueta_calendario(cal) -> str:
+    try:
+        dn = cal.get_display_name()
+        if dn:
+            return str(dn).strip()
+    except Exception:
+        pass
+    slug = _calendar_slug_from_dav_url(str(getattr(cal, "url", "")))
+    return slug or "CalDAV"
+
+
+def _calendarios_filtrados_por_nombres(calendars, nombres: list[str]) -> list:
+    """Unión de calendarios cuyo slug o nombre visible coincide con algún nombre."""
+    if not nombres:
+        return list(calendars)
+    seen: set[str] = set()
+    out: list = []
+    for c in calendars:
+        url = str(getattr(c, "url", "") or "")
+        if not url or url in seen:
+            continue
+        for name in nombres:
+            nm = (name or "").strip()
+            if not nm:
+                continue
+            if _matches_calendar_display_name(url, nm) or _matches_calendar_live_display_name(c, nm):
+                seen.add(url)
+                out.append(c)
+                break
+    return out
+
+
 def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
     """
     Lista calendarios del usuario autenticado que corresponden a la URL de referencia
@@ -125,12 +157,12 @@ def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
     if by_slug:
         return by_slug
 
-    by_name: list = []
-    cal_name = (config.CALDAV_CALENDAR_NAME or "").strip()
-    if cal_name:
-        for c in all_cals:
-            if _matches_calendar_live_display_name(c, cal_name):
-                by_name.append(c)
+    nombres = list(config.CALDAV_CALENDAR_NAMES or [])
+    if not nombres and (config.CALDAV_CALENDAR_NAME or "").strip():
+        nombres = [(config.CALDAV_CALENDAR_NAME or "").strip()]
+    if not nombres:
+        return []
+    by_name = _calendarios_filtrados_por_nombres(all_cals, nombres)
     if by_name:
         return by_name
     return []
@@ -163,13 +195,8 @@ def _resolve_target_calendars(client) -> list:
     except Exception:
         return []
 
-    if config.CALDAV_CALENDAR_NAME:
-        filtrados = [
-            c
-            for c in calendars
-            if _matches_calendar_display_name(str(getattr(c, "url", "")), config.CALDAV_CALENDAR_NAME)
-        ]
-        return filtrados
+    if config.CALDAV_CALENDAR_NAMES:
+        return _calendarios_filtrados_por_nombres(calendars, config.CALDAV_CALENDAR_NAMES)
 
     return calendars
 
@@ -478,26 +505,45 @@ def crear_tarea(
 
 def listar_tareas(include_completed: bool = False) -> list[dict]:
     """
-    Recupera tareas (VTODO) del calendario CalDAV.
-    Retorna lista de dicts con: summary, description, due, priority, status.
+    Recupera tareas (VTODO) de todos los calendarios objetivo CalDAV.
+    Retorna lista de dicts con: summary, description, due, priority, status, uid, href, calendario.
     """
-    calendar = _conectar_calendario()
-    if not calendar or not Calendar:
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        return []
+    if not caldav or not Calendar:
         return []
     try:
-        todos_raw = calendar.todos(include_completed=include_completed)
+        client = caldav.DAVClient(
+            config.CALDAV_URL,
+            username=config.CALDAV_USER,
+            password=config.CALDAV_PASS,
+        )
+        calendars = _resolve_target_calendars(client)
     except Exception:
         return []
 
+    if not calendars:
+        return []
+
     resultado: list[dict] = []
-    for todo_obj in todos_raw:
+    seen_uid: set[str] = set()
+
+    for calendar in calendars:
+        cal_label = _etiqueta_calendario(calendar)
         try:
-            data = todo_obj.data
-            if isinstance(data, bytes):
-                data = data.decode("utf-8", errors="replace")
-            cal = Calendar.from_ical(data)
-            for comp in cal.walk():
-                if comp.name == "VTODO":
+            todos_raw = calendar.todos(include_completed=include_completed)
+        except Exception:
+            continue
+
+        for todo_obj in todos_raw:
+            try:
+                data = todo_obj.data
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="replace")
+                cal = Calendar.from_ical(data)
+                for comp in cal.walk():
+                    if comp.name != "VTODO":
+                        continue
                     due_raw = comp.get("due")
                     due_str = ""
                     if due_raw:
@@ -506,18 +552,28 @@ def listar_tareas(include_completed: bool = False) -> list[dict]:
 
                     pri_raw = comp.get("priority")
                     pri_val = int(pri_raw) if pri_raw else 0
+                    uid = str(comp.get("uid") or "")
+                    href = str(getattr(todo_obj, "url", "") or "")
+                    dedupe = uid or href
+                    if dedupe and dedupe in seen_uid:
+                        continue
+                    if dedupe:
+                        seen_uid.add(dedupe)
 
-                    resultado.append({
-                        "summary": str(comp.get("summary") or ""),
-                        "description": str(comp.get("description") or ""),
-                        "due": due_str,
-                        "priority": pri_val,
-                        "status": str(comp.get("status") or ""),
-                        "uid": str(comp.get("uid") or ""),
-                        "href": str(getattr(todo_obj, "url", "") or ""),
-                    })
-        except Exception:
-            continue
+                    resultado.append(
+                        {
+                            "summary": str(comp.get("summary") or ""),
+                            "description": str(comp.get("description") or ""),
+                            "due": due_str,
+                            "priority": pri_val,
+                            "status": str(comp.get("status") or ""),
+                            "uid": uid,
+                            "href": href,
+                            "calendario": cal_label,
+                        }
+                    )
+            except Exception:
+                continue
     return resultado
 
 
@@ -577,6 +633,7 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
     for calendar in ordered:
         if _calendar_supports_vevent(calendar) is False:
             continue
+        cal_label = _etiqueta_calendario(calendar)
         try:
             found = calendar.date_search(
                 win_start,
@@ -626,6 +683,7 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
                         "sort_key": st,
                         "uid": uid,
                         "url": url,
+                        "calendario": cal_label,
                     }
                 )
 

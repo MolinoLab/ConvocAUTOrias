@@ -1,7 +1,7 @@
 """
 CSV para investigaciones encoladas desde Telegram (/investiga).
-Esquema: id, fecha, estado, concepto, resumen, link.
-Estados: pendiente, investigado (listo pero Telegram falló), enviado.
+Esquema: id, fecha, estado, concepto, resumen, link, archivo, telegram_chat_id.
+Estados: pendiente, investigado (listo pero Telegram falló), enviado, error.
 """
 from __future__ import annotations
 
@@ -22,9 +22,10 @@ CAMPOS_INVESTIGACION = [
     "resumen",
     "link",
     "archivo",
+    "telegram_chat_id",
 ]
 
-ESTADOS_INVESTIGACION = {"pendiente", "investigado", "enviado"}
+ESTADOS_INVESTIGACION = {"pendiente", "investigado", "enviado", "error"}
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Investigacion:
     resumen: str
     link: str
     archivo: str = ""
+    telegram_chat_id: str = ""
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -46,6 +48,7 @@ class Investigacion:
             "resumen": self.resumen,
             "link": self.link,
             "archivo": self.archivo,
+            "telegram_chat_id": self.telegram_chat_id,
         }
 
 
@@ -58,6 +61,7 @@ def _fila_a_investigacion(fila: dict[str, str]) -> Investigacion:
         resumen=fila.get("resumen", ""),
         link=fila.get("link", ""),
         archivo=(fila.get("archivo") or "").strip(),
+        telegram_chat_id=(fila.get("telegram_chat_id") or "").strip(),
     )
 
 

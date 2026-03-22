@@ -8,6 +8,13 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import config
+from src.plazo import MESES_LARGO, _MESES_LARGO_RE
+
+
+def _anio_dos_cifras(y: int) -> int:
+    if 0 <= y < 100:
+        return 2000 + y
+    return y
 
 
 def _zona() -> ZoneInfo:
@@ -49,6 +56,73 @@ def formatear_fecha_ver(valor: str) -> str:
 def _match_span(texto: str, pattern: re.Pattern) -> re.Match | None:
     m = pattern.search(texto)
     return m
+
+
+def extraer_fecha_natural_dd_mm_yyyy_y_resto(texto: str) -> tuple[str | None, str]:
+    """
+    Fechas en español coloquial: devuelve (DD-MM-YYYY, texto sin el fragmento de fecha).
+
+    Cubre:
+      - DD de mes de YYYY / DD de mes del YYYY
+      - DD de mes (sin año, año según APP_TIMEZONE)
+      - DD del MM del YYYY / DD del MM de YYYY (mes numérico; año 2 cifras -> 20YY)
+    """
+    t = (texto or "").strip()
+    if not t:
+        return None, t
+    s = t.lower()
+    hoy = fecha_hoy_relativas()
+
+    m = re.search(
+        rf"\b(\d{{1,2}})\s+de\s+({_MESES_LARGO_RE})\s+(?:de|del)\s*(\d{{2}}|\d{{4}})\b",
+        s,
+    )
+    if m:
+        d, mes_nombre, y_raw = int(m.group(1)), m.group(2), int(m.group(3))
+        y = _anio_dos_cifras(y_raw)
+        mo = MESES_LARGO[mes_nombre]
+        try:
+            datetime(y, mo, d)
+        except ValueError:
+            return None, t
+        fecha = f"{d:02d}-{mo:02d}-{y}"
+        resto = (t[: m.start()] + t[m.end() :]).strip()
+        resto = " ".join(resto.split())
+        return fecha, resto
+
+    m = re.search(rf"\b(\d{{1,2}})\s+de\s+({_MESES_LARGO_RE})\b", s)
+    if m:
+        d, mes_nombre = int(m.group(1)), m.group(2)
+        mo = MESES_LARGO[mes_nombre]
+        y = hoy.year
+        try:
+            datetime(y, mo, d)
+        except ValueError:
+            return None, t
+        fecha = f"{d:02d}-{mo:02d}-{y}"
+        resto = (t[: m.start()] + t[m.end() :]).strip()
+        resto = " ".join(resto.split())
+        return fecha, resto
+
+    m = re.search(
+        r"\b(\d{1,2})\s+del\s+(\d{1,2})\s+(?:del|de)\s*(\d{2}|\d{4})\b",
+        s,
+    )
+    if m:
+        d, mo, y_raw = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if not 1 <= mo <= 12:
+            return None, t
+        y = _anio_dos_cifras(y_raw)
+        try:
+            datetime(y, mo, d)
+        except ValueError:
+            return None, t
+        fecha = f"{d:02d}-{mo:02d}-{y}"
+        resto = (t[: m.start()] + t[m.end() :]).strip()
+        resto = " ".join(resto.split())
+        return fecha, resto
+
+    return None, t
 
 
 def extraer_fecha_relativa_dd_mm_yyyy(texto: str) -> tuple[str | None, str]:

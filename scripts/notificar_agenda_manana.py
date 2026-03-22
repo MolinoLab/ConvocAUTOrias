@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.caldav_client import listar_eventos_en_ventana, listar_tareas
 from src.deck_client import listar_tareas_deck
-from src.notifier import enviar_mensaje
+from src.notifier import enviar_mensaje_a_chats
 
 MADRID = ZoneInfo("Europe/Madrid")
 CHUNK = 4000
@@ -27,11 +27,7 @@ def _manana_madrid() -> tuple[date, str]:
 def _enviar_largo(texto: str) -> bool:
     if not texto.strip():
         return True
-    ok = True
-    for i in range(0, len(texto), CHUNK):
-        if not enviar_mensaje(texto[i : i + CHUNK]):
-            ok = False
-    return ok
+    return enviar_mensaje_a_chats(texto, chunk=CHUNK)
 
 
 def main() -> int:
@@ -47,12 +43,17 @@ def main() -> int:
         print(f"Nada pendiente para mañana ({iso}, Madrid). No se envia Telegram.")
         return 0
 
-    lineas = [f"Agenda para mañana ({iso}, hora Europa/Madrid):\n"]
+    lineas = [
+        f"Recordatorio: agenda para mañana ({iso}, hora Europa/Madrid).\n",
+        "Resumen automático; en el bot usa /informame para ver los próximos 7 días.\n",
+    ]
 
     if eventos:
-        lineas.append("Eventos (CalDAV):")
+        lineas.append("\nEventos (CalDAV):")
         for ev in eventos:
-            lineas.append(f"  • [{ev['start_iso']}] {ev['summary']}")
+            cal = ev.get("calendario")
+            suf = f" ({cal})" if cal else ""
+            lineas.append(f"  • [{ev['start_iso']}]{suf} {ev['summary']}")
         lineas.append("")
 
     if deck:
@@ -65,14 +66,19 @@ def main() -> int:
     if vtodos:
         lineas.append("Tareas calendario (VTODO, due mañana):")
         for t in vtodos:
-            lineas.append(f"  • {t.get('summary') or '(sin titulo)'}")
+            cal = t.get("calendario")
+            suf = f" ({cal})" if cal else ""
+            lineas.append(f"  •{suf} {t.get('summary') or '(sin titulo)'}")
         lineas.append("")
 
     texto = "\n".join(lineas).strip()
     if _enviar_largo(texto):
         print("Mensaje enviado por Telegram.")
         return 0
-    print("No se pudo enviar por Telegram (revisa TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID).")
+    print(
+        "No se pudo enviar por Telegram (revisa TELEGRAM_BOT_TOKEN y "
+        "TELEGRAM_CHAT_ID / TELEGRAM_NOTIFY_CHAT_IDS)."
+    )
     return 1
 
 

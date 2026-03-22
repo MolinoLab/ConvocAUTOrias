@@ -1,7 +1,7 @@
 """
 API mínima para que n8n y OpenClaw invoquen las tareas del proyecto vía HTTP.
-Endpoints: POST /scrape, POST /revisar, POST /notificar-agenda-manana, POST /sync-caldav,
-           POST /indexar-ideas, POST /sync-nextcloud-datos, POST /generar-borrador,
+Endpoints: POST /scrape, POST /revisar, POST /notificar-agenda-manana, POST /notificar-agenda-semana,
+           POST /sync-caldav, POST /indexar-ideas, POST /sync-nextcloud-datos, POST /generar-borrador,
            POST /procesar-investigaciones,
            GET /funcionalidad, POST /funcionalidad
 """
@@ -28,10 +28,12 @@ def _run_script(module: str, *args: str) -> dict:
         text=True,
         timeout=600,
     )
+    err = (result.stderr or "").strip()
     return {
         "returncode": result.returncode,
         "stdout": result.stdout or "",
         "stderr": result.stderr or "",
+        "stderr_trail": err[-2000:] if err else "",
         "success": result.returncode == 0,
     }
 
@@ -58,6 +60,12 @@ def revisar():
 def notificar_agenda_manana():
     """Eventos y tareas (Deck + VTODO) para mañana (Europa/Madrid); Telegram si hay ítems."""
     return _run_script("scripts.notificar_agenda_manana")
+
+
+@app.post("/notificar-agenda-semana")
+def notificar_agenda_semana():
+    """Resumen lunes–domingo siguiente (APP_TIMEZONE); Telegram a todos los chats configurados."""
+    return _run_script("scripts.notificar_agenda_semana")
 
 
 @app.post("/sync-caldav")

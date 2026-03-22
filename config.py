@@ -20,12 +20,23 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Mad
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# Chats adicionales para recordatorios (agenda mañana/semana, etc.), separados por coma
+_telegram_notify_raw = os.getenv("TELEGRAM_NOTIFY_CHAT_IDS", "").strip()
+TELEGRAM_NOTIFY_CHAT_IDS = [
+    x.strip() for x in _telegram_notify_raw.split(",") if x.strip()
+]
 
 # CalDAV / Nextcloud Calendar
 CALDAV_URL = os.getenv("CALDAV_URL", "")
 CALDAV_USER = os.getenv("CALDAV_USER", "")
 CALDAV_PASS = os.getenv("CALDAV_PASS", "")
-CALDAV_CALENDAR_NAME = os.getenv("CALDAV_CALENDAR_NAME", "MolinoLab").strip()
+_caldav_calendar_name_raw = os.getenv("CALDAV_CALENDAR_NAME", "MolinoLab").strip()
+if not _caldav_calendar_name_raw:
+    CALDAV_CALENDAR_NAMES = []
+    CALDAV_CALENDAR_NAME = ""
+else:
+    CALDAV_CALENDAR_NAMES = [p.strip() for p in _caldav_calendar_name_raw.split(",") if p.strip()]
+    CALDAV_CALENDAR_NAME = CALDAV_CALENDAR_NAMES[0] if CALDAV_CALENDAR_NAMES else ""
 # URL completa del calendario (colección), ej. .../remote.php/dav/calendars/usuario/molinolab/
 _caldav_calendar_url_raw = os.getenv("CALDAV_CALENDAR_URL", "").strip()
 CALDAV_CALENDAR_URL = (
