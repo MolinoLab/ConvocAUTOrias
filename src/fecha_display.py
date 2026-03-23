@@ -151,7 +151,61 @@ def extraer_fecha_relativa_dd_mm_yyyy(texto: str) -> tuple[str | None, str]:
             resto = (t[: m.start()] + t[m.end() :]).strip()
             resto = " ".join(resto.split())
             return fecha, resto
+
+    dia_fecha, dia_resto = extraer_dia_semana_proximo_dd_mm_yyyy_y_resto(t)
+    if dia_fecha:
+        return dia_fecha, dia_resto
+
     return None, t
+
+
+# Nombres de día (normalizado sin tildes para lookup)
+_DIA_SEMANA_A_WEEKDAY: dict[str, int] = {
+    "lunes": 0,
+    "martes": 1,
+    "miercoles": 2,
+    "jueves": 3,
+    "viernes": 4,
+    "sabado": 5,
+    "domingo": 6,
+}
+
+_DIA_SEMANA_TOKEN_RE = (
+    r"lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo"
+)
+
+
+def _token_dia_a_weekday(token: str) -> int | None:
+    t = (token or "").lower().replace("á", "a").replace("é", "e")
+    return _DIA_SEMANA_A_WEEKDAY.get(t)
+
+
+def extraer_dia_semana_proximo_dd_mm_yyyy_y_resto(texto: str) -> tuple[str | None, str]:
+    """
+    Próximo día con ese nombre de semana respecto a hoy (APP_TIMEZONE).
+    Si hoy es ese día, cuenta hoy. Devuelve (DD-MM-YYYY, texto sin el fragmento).
+    Acepta opcional 'el' delante del nombre del día.
+    """
+    t = (texto or "").strip()
+    if not t:
+        return None, t
+    m = re.search(
+        rf"\b(?:el\s+)?({_DIA_SEMANA_TOKEN_RE})\b",
+        t,
+        flags=re.IGNORECASE,
+    )
+    if not m:
+        return None, t
+    wd = _token_dia_a_weekday(m.group(1))
+    if wd is None:
+        return None, t
+    hoy = fecha_hoy_relativas()
+    delta = (wd - hoy.weekday()) % 7
+    f = hoy + timedelta(days=delta)
+    fecha = f"{f.day:02d}-{f.month:02d}-{f.year}"
+    resto = (t[: m.start()] + t[m.end() :]).strip()
+    resto = " ".join(resto.split())
+    return fecha, resto
 
 
 def extraer_fecha_relativa_iso_y_resto(texto: str) -> tuple[str | None, str]:
@@ -168,5 +222,13 @@ def extraer_fecha_relativa_iso_y_resto(texto: str) -> tuple[str | None, str]:
         return None, texto.strip()
 
 
+def strip_sufijo_para_fecha(texto: str) -> str:
+    """Quita un sufijo final 'para el' o 'para' (p. ej. tras extraer la fecha del resto)."""
+    t = (texto or "").strip()
+    t = re.sub(r"\s+para el\s*$", "", t, flags=re.IGNORECASE).strip()
+    t = re.sub(r"\s+para\s*$", "", t, flags=re.IGNORECASE).strip()
+    return t
+
+
 def strip_sufijo_para_el(texto: str) -> str:
-    return re.sub(r"\s+para el\s*$", "", (texto or "").strip(), flags=re.IGNORECASE).strip()
+    return strip_sufijo_para_fecha(texto)

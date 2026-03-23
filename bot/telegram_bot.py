@@ -1,13 +1,14 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
 ideas, memorias, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
-tareas Deck, eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
+tareas Deck, fabricación (Fabricar), eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 from datetime import date, datetime, timedelta
@@ -68,12 +69,21 @@ from src.caldav_client import (
     obtener_ultimo_error_evento,
 )
 from src.deck_client import (
+    actualizar_tarjeta_deck,
     borrar_tarjeta_deck,
     crear_tarea_deck,
     listar_tareas_deck,
     obtener_tarjeta_deck,
     obtener_ultimo_aviso_asignacion_deck,
     obtener_ultimo_error_deck,
+)
+from src.db_fabrica import (
+    ItemFabrica,
+    añadir_item as añadir_item_fabrica,
+    actualizar_campos as actualizar_fabrica_campos,
+    buscar_por_id as buscar_fabrica_por_id,
+    eliminar_por_id as eliminar_fabrica_por_id,
+    leer_fabrica,
 )
 from src.db_diario import añadir_entrada as diario_añadir_entrada
 from src.db_huevos import (
@@ -124,6 +134,7 @@ from src.fecha_display import (
     formatear_fecha_ver,
     extraer_fecha_relativa_iso_y_resto,
     strip_sufijo_para_el,
+    strip_sufijo_para_fecha,
 )
 from src.db_contabilidad import (
     CAMPOS_EDITABLES_MOD,
@@ -168,9 +179,26 @@ CACHE_RM_INVESTIGACIONES = "rm_investigacion_ids"
 CACHE_RM_MEMORIAS = "rm_memoria_ids"
 CACHE_RM_PENDIENTES_IDS = "rm_pendiente_ids"
 CACHE_RM_CONTABILIDAD_IDS = "rm_contabilidad_ids"
+CACHE_RM_FABRICA = "rm_fabrica_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
 WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
+WIZARD_MOD_FABRICA_KEY = "mod_fabrica_wizard"
 ESPERANDO_FACTURA_KEY = "esperando_factura"
+
+CAMPOS_MOD_FABRICA: list[tuple[str, str]] = [
+    ("titulo", "Titulo"),
+    ("medidas", "Medidas"),
+    ("fecha_due", "Fecha limite (DD-MM-AAAA, mañana, etc.; '-' sin fecha)"),
+    ("tipo", "Tipo: laser, 3d o '-' sin tipo"),
+    ("notas", "Notas / descripcion"),
+]
+
+FAB_RESUMEN_LISTA_MAX = 72
+
+_PAT_MEDIDAS_FABRICA = re.compile(
+    r"\b\d+\s*[x×]\s*\d+(?:\s*[x×]\s*\d+)?(?:\s*(?:cm|mm|m))?\b",
+    re.IGNORECASE,
+)
 
 # Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
 FUNC_RESUMEN_MAX = 80
@@ -185,6 +213,7 @@ _TIPOS_MV_VALIDOS = frozenset(
         "funcionalidad",
         "investiga",
         "comprar",
+        "fabrica",
         "diario",
     }
 )
@@ -432,6 +461,8 @@ _ACCIONES_AUDIO = frozenset(
         "tarea",
         "evento",
         "comprar",
+        "fabrica",
+        "fab",
         "investiga",
         "huevos",
         "diario",
@@ -490,7 +521,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Proyectos]\n"
         "/proyecto — Alta guiada (titulo, fechas, contacto, estado, descripcion en .md)\n"
         "/cancelarproyecto — Abortar la alta guiada\n"
-        "/listproyecto — Listar\n"
+        "/listproyectos — Listar\n"
         "/verproyecto <numero>\n"
         "/rmproyecto <num ...>\n\n"
         "[Tiempos por proyecto]\n"
@@ -516,6 +547,13 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/listtareas — Listar por fecha\n"
         "/vertarea <numero> — Detalle de la tarjeta\n"
         "/rmtarea <num ...>\n\n"
+        "[Fabricación Deck]\n"
+        f"/fabrica o /fab <texto> — Columna \"{config.DECK_STACK_FABRICAR or 'Fabricar'}\" "
+        "(medidas, laser/3d, fecha opcionales)\n"
+        "/listfab — Listar registros (CSV + enlace Deck)\n"
+        "/verfab <numero>\n"
+        "/modfab <numero> — Edicion guiada; /cancelarmodfab para salir\n"
+        "/rmfab <num ...>\n\n"
         "[Eventos CalDAV]\n"
         "/evento <nombre> <fecha> [HH:MM] — Crear (1 h si hay hora)\n"
         "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
@@ -540,12 +578,13 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/verpendiente <n|id>\n"
         "/rmpendientes <n ...>\n"
         "/mvpendiente <n|id> <tipo> [args extra] — idea, memoria, tarea, evento, funcionalidad, "
-        "investiga, comprar, diario (func = funcionalidad)\n\n"
+        "investiga, comprar, fabrica, diario (func = funcionalidad, fab = fabrica)\n\n"
         "[Audio]\n"
-        "Primera palabra: idea, memoria, funcionalidad, tarea, comprar, evento, eventos, investiga, "
+        "Primera palabra: idea, memoria, funcionalidad, tarea, comprar, fabrica, fab, evento, eventos, investiga, "
         "huevos, diario. Si no coincide, se guarda en pendientes (no como idea).\n"
-        "Por voz, tarea/compra/evento: usa 'para el' antes de la fecha "
-        "(ej. tarea comprar pan para el 25-03). Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
+        "Por voz, tarea/compra/evento: usa 'para el' o 'para' antes de la fecha "
+        "(ej. tarea comprar pan para mañana, para el 25-03 o para el miércoles). "
+        "Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
         "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual; "
         "tambien YYYY-MM-DD; palabras: antier, ayer, hoy, mañana, pasado (pasado mañana); "
         "y en español: 12 de febrero de 2026, 12 del 2 del 2026, 3 de marzo.\n"
@@ -1401,14 +1440,14 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(
             f"Proyecto guardado.\nID interno: {pid}\nTitulo: {p.titulo}\n"
             f"Estado: {p.estado}\n\n"
-            f"Usa /listproyecto y /tiempo <numero> para registrar tiempo."
+            f"Usa /listproyectos y /tiempo <numero> para registrar tiempo."
         )
         return True
 
     return False
 
 
-async def cmd_listproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_listproyectos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
@@ -1446,7 +1485,7 @@ async def cmd_verproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not context.args:
         await update.message.reply_text(
             "Uso: /verproyecto <numero>\n"
-            "El numero es el de /listproyecto en este chat."
+            "El numero es el de /listproyectos en este chat."
         )
         return
     arg = context.args[0].strip()
@@ -1457,7 +1496,7 @@ async def cmd_verproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         p = buscar_proyecto_por_id(arg)
     if not p:
         await update.message.reply_text(
-            "No se encontro ese proyecto.\nUsa /listproyecto para ver el listado."
+            "No se encontro ese proyecto.\nUsa /listproyectos para ver el listado."
         )
         return
     path = _ruta_archivo_proyecto(p.ruta)
@@ -1475,7 +1514,7 @@ async def cmd_rmproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not context.args:
         await update.message.reply_text(
             "Uso: /rmproyecto <numero> [numero ...]\n"
-            "Los numeros son los de /listproyecto en este chat."
+            "Los numeros son los de /listproyectos en este chat."
         )
         return
     enteros, otros = _parsear_tokens_rm(list(context.args))
@@ -1497,7 +1536,7 @@ async def cmd_rmproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not ids_objetivo:
         msg = "Ningun numero valido."
         if fuera:
-            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listproyecto en este chat."
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listproyectos en este chat."
         await update.message.reply_text(msg)
         return
 
@@ -1546,18 +1585,18 @@ async def cmd_tiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "Uso:\n"
             "/tiempo <num_proyecto> — Inicia contador (solo uno activo a la vez).\n"
             "/tiempo <num_proyecto> <minutos> — Suma tiempo manual (hoy desde 00:00).\n"
-            "Los numeros son los de /listproyecto en este chat."
+            "Los numeros son los de /listproyectos en este chat."
         )
         return
 
     if not args[0].isdigit():
-        await update.message.reply_text("El primer argumento debe ser el numero de /listproyecto.")
+        await update.message.reply_text("El primer argumento debe ser el numero de /listproyectos.")
         return
     n = int(args[0])
     p = _proyecto_desde_indice_listado(context, n)
     if not p:
         await update.message.reply_text(
-            "Proyecto no encontrado. Ejecuta /listproyecto en este chat primero."
+            "Proyecto no encontrado. Ejecuta /listproyectos en este chat primero."
         )
         return
 
@@ -2332,31 +2371,59 @@ def _parsear_args_tarea(texto_raw: str) -> tuple[str, str | None, str]:
         titulo = texto
         descripcion = ""
 
-    return titulo.strip(), fecha, descripcion.strip()
+    titulo = strip_sufijo_para_fecha(titulo.strip())
+    return titulo, fecha, descripcion.strip()
 
 
-def _partir_audio_para_el(contenido: str) -> tuple[str, str]:
+_INICIO_FECHA_AUDIO_DIA = re.compile(
+    r"^(?:el\s+)?(?:lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b",
+    re.IGNORECASE,
+)
+
+
+def _inicio_parece_fecha_bloque(s: str) -> bool:
+    """True si el texto (tras normalizar) empieza por algo que el parseo de fechas suele reconocer."""
+    s = " ".join((s or "").split())
+    if not s:
+        return False
+    if s[0].isdigit():
+        return True
+    low = s.lower()
+    if low.startswith("el "):
+        low = low[3:].lstrip()
+    if low.startswith(("pasado mañana", "pasado manana")):
+        return True
+    if low.startswith(("antier", "ayer", "hoy", "mañana", "manana")):
+        return True
+    if re.match(r"pasado\b", low) and not low.startswith(("pasado mañana", "pasado manana")):
+        return True
+    return _INICIO_FECHA_AUDIO_DIA.match(low) is not None
+
+
+def _partir_audio_titulo_y_fecha(contenido: str) -> tuple[str, str]:
     """
-    Divide el payload de voz en (antes, despues) usando la frase 'para el'.
-    Si no aparece, (contenido.strip(), '').
+    Divide el payload de voz en (antes, despues) usando 'para el' o 'para' + inicio de fecha.
+    Si no hay separador, (contenido.strip(), '').
     """
     texto = " ".join((contenido or "").split()).strip()
     if not texto:
         return "", ""
     m = re.search(r"\bpara el\b", texto, flags=re.IGNORECASE)
-    if not m:
-        return texto, ""
-    antes = texto[: m.start()].strip()
-    despues = texto[m.end() :].strip()
-    return antes, despues
+    if m:
+        return texto[: m.start()].strip(), texto[m.end() :].strip()
+    for m2 in re.finditer(r"\bpara\b", texto, flags=re.IGNORECASE):
+        despues = texto[m2.end() :].strip()
+        if _inicio_parece_fecha_bloque(despues):
+            return texto[: m2.start()].strip(), despues
+    return texto, ""
 
 
 def _parsear_tarea_audio_payload(contenido: str) -> tuple[str, str | None, str]:
     """
-    Tarea por voz: con 'para el', el título va antes y la fecha (y resto) después.
-    Sin 'para el', mismo criterio que _parsear_args_tarea sobre el texto completo.
+    Tarea por voz: con 'para el' o 'para' + fecha, el título va antes y la fecha (y resto) después.
+    Sin separador, mismo criterio que _parsear_args_tarea sobre el texto completo.
     """
-    antes, despues = _partir_audio_para_el(contenido)
+    antes, despues = _partir_audio_titulo_y_fecha(contenido)
     if despues.strip():
         titulo, _, desc_titulo = _parsear_args_tarea(antes)
         fecha, resto_tras_fecha = _extraer_fecha_iso_y_resto(despues.strip())
@@ -2392,12 +2459,13 @@ def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
     else:
         titulo = titulo_raw
 
-    return titulo.strip(), fecha, hora
+    titulo = strip_sufijo_para_fecha(titulo.strip())
+    return titulo, fecha, hora
 
 
 def _parsear_evento_audio_payload(contenido: str) -> tuple[str, str | None, str | None]:
-    """Evento por voz: con 'para el', nombre antes y fecha/hora después."""
-    antes, despues = _partir_audio_para_el(contenido)
+    """Evento por voz: con 'para el' o 'para' + fecha, nombre antes y fecha/hora después."""
+    antes, despues = _partir_audio_titulo_y_fecha(contenido)
     if despues.strip():
         n2, fecha_ev, hora_ev = _parsear_args_evento(despues)
         nombre = (antes.strip() or n2.strip()).strip()
@@ -2406,6 +2474,147 @@ def _parsear_evento_audio_payload(contenido: str) -> tuple[str, str | None, str 
     if not fe:
         nom = strip_sufijo_para_el(nom)
     return nom, fe, ho
+
+
+def _extraer_tipo_fabrica(texto: str) -> tuple[str, str]:
+    """Devuelve (tipo: laser|3d|'', texto sin la mención)."""
+    t = texto
+    tipo = ""
+    low = t.lower()
+    if re.search(r"\bl[aá]ser\b", low):
+        tipo = "laser"
+        t = re.sub(r"\bl[aá]ser\b", " ", t, flags=re.IGNORECASE)
+    elif re.search(r"\b3\s*d\b|\b3d\b", low):
+        tipo = "3d"
+        t = re.sub(r"\b3\s*d\b|\b3d\b", " ", t, flags=re.IGNORECASE)
+    elif re.search(r"\bimpresi[oó]n\b", low):
+        tipo = "3d"
+        t = re.sub(r"\bimpresi[oó]n\b", " ", t, flags=re.IGNORECASE)
+    return tipo, " ".join(t.split())
+
+
+def _parsear_texto_fabrica(texto_raw: str) -> tuple[str, str, str, str | None, str]:
+    """titulo, medidas, tipo (laser|3d|''), fecha_iso YYYY-MM-DD|None, notas."""
+    t = texto_raw.strip()
+    if not t:
+        return "", "", "", None, ""
+    tipo, t = _extraer_tipo_fabrica(t)
+    medidas = ""
+    m = _PAT_MEDIDAS_FABRICA.search(t)
+    if m:
+        medidas = m.group(0).strip()
+        t = (t[: m.start()] + t[m.end() :]).strip()
+        t = " ".join(t.split())
+    titulo, fecha_iso, notas = _parsear_args_tarea(t)
+    return titulo.strip(), medidas, tipo, fecha_iso, notas.strip()
+
+
+def _descripcion_deck_fabrica(medidas: str, tipo: str, notas: str) -> str:
+    lineas: list[str] = []
+    if (medidas or "").strip():
+        lineas.append(f"Medidas: {medidas.strip()}")
+    if (tipo or "").strip():
+        tl = tipo.strip().lower()
+        etiqueta = "Láser" if tl == "laser" else ("3D" if tl == "3d" else tipo.strip())
+        lineas.append(f"Tipo: {etiqueta}")
+    if (notas or "").strip():
+        lineas.append(notas.strip())
+    return "\n".join(lineas)
+
+
+def _normalizar_fecha_input_fabrica(texto: str) -> str | None:
+    """Cadena vacía = sin fecha; ISO si válido; None si inválido."""
+    t = (texto or "").strip()
+    if not t or t == "-":
+        return ""
+    iso, _ = _extraer_fecha_iso_y_resto(t)
+    if not iso:
+        return None
+    try:
+        datetime.strptime(iso, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return iso
+
+
+def _normalizar_tipo_input_fabrica(texto: str) -> str | None:
+    t = (texto or "").strip().lower()
+    if not t or t == "-":
+        return ""
+    if t in ("laser", "láser"):
+        return "laser"
+    if t in ("3d", "3 d", "impresion", "impresión"):
+        return "3d"
+    return None
+
+
+def _fabrica_desde_indice_listado(
+    context: ContextTypes.DEFAULT_TYPE, indice: int
+) -> ItemFabrica | None:
+    cache = (context.chat_data or {}).get(CACHE_RM_FABRICA) or []
+    if indice < 1 or indice > len(cache):
+        return None
+    return buscar_fabrica_por_id(cache[indice - 1])
+
+
+def _formatear_fabrica_lista(it: ItemFabrica) -> str:
+    tit = (it.titulo or "").strip() or "(sin titulo)"
+    if len(tit) > FAB_RESUMEN_LISTA_MAX:
+        tit = tit[:FAB_RESUMEN_LISTA_MAX] + "..."
+    extras: list[str] = []
+    if (it.tipo or "").strip():
+        extras.append(it.tipo.strip())
+    if (it.fecha_due or "").strip():
+        extras.append(f"vence {it.fecha_due}")
+    suf = f" ({', '.join(extras)})" if extras else ""
+    return f"{tit}{suf}"
+
+
+def _formatear_fabrica_completa(it: ItemFabrica) -> str:
+    tl = (it.tipo or "").strip()
+    tipo_d = "Láser" if tl == "laser" else ("3D" if tl == "3d" else (tl or "(sin tipo)"))
+    fd = (it.fecha_due or "").strip()
+    fd_disp = fd if fd else "(sin fecha limite)"
+    return (
+        f"Titulo: {it.titulo or '(vacio)'}\n"
+        f"Medidas: {it.medidas or '(vacias)'}\n"
+        f"Tipo: {tipo_d}\n"
+        f"Fecha limite: {fd_disp}\n"
+        f"Notas: {it.notas or '(vacias)'}\n"
+        f"Deck: board={it.board_id} stack={it.stack_id} card={it.card_id}\n"
+        f"ID: {it.id}"
+    )
+
+
+async def _sincronizar_fabrica_a_deck(it: ItemFabrica) -> bool:
+    if not it.board_id or not it.stack_id or not it.card_id:
+        return False
+    try:
+        bid = int(it.board_id)
+        sid = int(it.stack_id)
+        cid = int(it.card_id)
+    except ValueError:
+        return False
+    desc = _descripcion_deck_fabrica(it.medidas, it.tipo, it.notas)
+    fe = (it.fecha_due or "").strip()
+    if fe:
+        return actualizar_tarjeta_deck(
+            bid, sid, cid,
+            titulo=it.titulo,
+            descripcion=desc,
+            fecha_due=fe,
+        )
+    return actualizar_tarjeta_deck(
+        bid, sid, cid,
+        titulo=it.titulo,
+        descripcion=desc,
+        quitar_fecha=True,
+    )
+
+
+def _generar_id_fabrica(titulo: str) -> str:
+    base = f"{datetime.now().isoformat()}::fab::{titulo[:400]}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:16]
 
 
 async def _ejecutar_creacion_tarea_deck(
@@ -2431,7 +2640,7 @@ async def _ejecutar_creacion_tarea_deck(
             return False
 
     msg = await update.message.reply_text("Creando tarea en Deck...")
-    ok = crear_tarea_deck(
+    ok, _, _, _ = crear_tarea_deck(
         titulo,
         descripcion=descripcion,
         fecha_due=fecha,
@@ -2512,6 +2721,374 @@ async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def _crear_fabrica_desde_texto(
+    update: Update,
+    texto_raw: str,
+    *,
+    fuente: str,
+    msg_trabajo,
+) -> bool:
+    titulo, medidas, tipo, fecha_iso, notas = _parsear_texto_fabrica(texto_raw)
+    if not titulo:
+        await msg_trabajo.edit_text(
+            "El titulo no puede estar vacio. Ej: soporte motor 10x20 cm laser para 25-03"
+        )
+        return False
+    if fecha_iso:
+        try:
+            datetime.strptime(fecha_iso, "%Y-%m-%d")
+        except ValueError:
+            await msg_trabajo.edit_text(f"Fecha invalida: {fecha_iso}")
+            return False
+
+    desc = _descripcion_deck_fabrica(medidas, tipo, notas)
+    stack_fab = (config.DECK_STACK_FABRICAR or "Fabricar").strip()
+    ok, bid, sid, cid = crear_tarea_deck(
+        titulo,
+        descripcion=desc,
+        fecha_due=fecha_iso,
+        stack_name=stack_fab,
+        assigned_user_uids=_deck_uids_para_update(update),
+    )
+    if not ok:
+        await msg_trabajo.edit_text(
+            "No se pudo crear la tarjeta en Deck.\n"
+            + (obtener_ultimo_error_deck() or "sin detalle")
+        )
+        return False
+
+    fid = _generar_id_fabrica(titulo)
+    it = ItemFabrica(
+        id=fid,
+        titulo=titulo,
+        medidas=medidas or "",
+        fecha_due=fecha_iso or "",
+        tipo=tipo or "",
+        notas=notas or "",
+        board_id=str(bid) if bid is not None else "",
+        stack_id=str(sid) if sid is not None else "",
+        card_id=str(cid) if cid is not None else "",
+        fecha_creacion=datetime.now().isoformat(),
+        fuente=fuente,
+    )
+    añadir_item_fabrica(it)
+    partes = [
+        f"Fabricacion registrada en Deck [{stack_fab}]: {titulo}",
+        f"ID registro: {fid}",
+    ]
+    if medidas:
+        partes.append(f"Medidas: {medidas}")
+    if tipo:
+        partes.append(f"Tipo: {tipo}")
+    if fecha_iso:
+        partes.append(f"Fecha limite: {fecha_iso}")
+    aviso_asg = obtener_ultimo_aviso_asignacion_deck()
+    if aviso_asg:
+        partes.append(aviso_asg)
+    if not cid:
+        partes.append(
+            "(Aviso: Deck no devolvio id de tarjeta; /rmfab no podra borrar la tarjeta en la nube.)"
+        )
+    await msg_trabajo.edit_text("\n".join(partes))
+    return True
+
+
+async def cmd_fabrica(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/fabrica"):
+        texto_raw = texto_raw[len("/fabrica") :].strip()
+    if not texto_raw:
+        await update.message.reply_text(
+            "Uso: /fabrica <texto libre>\n"
+            "Opcional en el texto: medidas (ej. 10x20 cm), tipo (laser, 3d, impresion), "
+            "fecha como en /tarea (DD-MM-AAAA, mañana, martes, etc.).\n"
+            f"Columna Deck: {config.DECK_STACK_FABRICAR or 'Fabricar'}."
+        )
+        return
+    msg = await update.message.reply_text("Creando en Fabricar...")
+    await _crear_fabrica_desde_texto(update, texto_raw, fuente="telegram_texto", msg_trabajo=msg)
+
+
+async def cmd_fab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/fab"):
+        texto_raw = texto_raw[len("/fab") :].strip()
+    if not texto_raw:
+        await update.message.reply_text(
+            "Uso: /fab <igual que /fabrica> — atajo para la columna Fabricar."
+        )
+        return
+    msg = await update.message.reply_text("Creando en Fabricar...")
+    await _crear_fabrica_desde_texto(update, texto_raw, fuente="telegram_texto", msg_trabajo=msg)
+
+
+async def cmd_listfab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    items = leer_fabrica()
+    if not items:
+        await update.message.reply_text("No hay registros en fabrica.csv.")
+        return
+
+    def _clave_fc(it: ItemFabrica) -> datetime:
+        raw = (it.fecha_creacion or "").strip()
+        if not raw:
+            return datetime.min
+        if "T" in raw:
+            try:
+                return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            except ValueError:
+                pass
+        dt = parsear_solo_fecha(raw)
+        return dt if dt is not None else datetime.min
+
+    items.sort(key=lambda x: (_clave_fc(x), x.titulo.lower()), reverse=True)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_FABRICA] = [x.id for x in items]
+
+    lineas = [f"{i}. {_formatear_fabrica_lista(x)}" for i, x in enumerate(items, 1)]
+    cab = f"Fabricacion ({len(items)}), mas recientes primero:\n\n"
+    texto_completo = cab + "\n".join(lineas)
+    if len(texto_completo) <= MAX_TELEGRAM_MSG:
+        await update.message.reply_text(texto_completo)
+    else:
+        await update.message.reply_text(texto_completo[:MAX_TELEGRAM_MSG])
+        await update.message.reply_text(texto_completo[MAX_TELEGRAM_MSG:])
+
+
+async def cmd_verfab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verfab <numero>\nEl numero es el de /listfab en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    it: ItemFabrica | None = None
+    if arg.isdigit():
+        it = _fabrica_desde_indice_listado(context, int(arg))
+    else:
+        it = buscar_fabrica_por_id(arg)
+    if not it:
+        await update.message.reply_text(
+            "No se encontro ese registro.\nUsa /listfab para ver el listado."
+        )
+        return
+    await _reply_texto_largo(update, _formatear_fabrica_completa(it))
+
+
+async def cmd_rmfab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmfab <numero> [numero ...]\nLos numeros son los de /listfab en este chat."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado, separados por espacios.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_FABRICA) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        fid = cache[n - 1]
+        if fid not in vistos:
+            vistos.add(fid)
+            ids_objetivo.append(fid)
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listfab en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    deck_fail = 0
+    for fid in ids_objetivo:
+        row = eliminar_fabrica_por_id(fid)
+        if not row:
+            continue
+        if row.board_id and row.stack_id and row.card_id:
+            try:
+                if not borrar_tarjeta_deck(
+                    int(row.board_id), int(row.stack_id), int(row.card_id)
+                ):
+                    deck_fail += 1
+            except (ValueError, TypeError):
+                deck_fail += 1
+        ok_n += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_FABRICA, None)
+    partes = [f"Registros fabrica eliminados del CSV: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if deck_fail:
+        partes.append(
+            f"Aviso: {deck_fail} tarjeta(s) Deck no se pudieron borrar (revisa en Nextcloud)."
+        )
+    await update.message.reply_text(" ".join(partes))
+
+
+def _texto_menu_mod_fabrica(item_id: str) -> str:
+    lineas = [
+        f"Modificando fabricacion (id {item_id}). Elige campo (0 = salir):",
+    ]
+    for i, (_k, label) in enumerate(CAMPOS_MOD_FABRICA, 1):
+        lineas.append(f"{i}. {label}")
+    return "\n".join(lineas)
+
+
+async def _manejar_wizard_mod_fabrica(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    wizard = context.chat_data.get(WIZARD_MOD_FABRICA_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or wizard.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        return False
+    iid = wizard["item_id"]
+    fase = wizard.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_FABRICA_KEY, None)
+            await update.message.reply_text("Listo (sin mas cambios).")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Envia un numero de campo o 0 para salir.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_FABRICA):
+            await update.message.reply_text("Numero invalido.")
+            return True
+        key, label = CAMPOS_MOD_FABRICA[n - 1]
+        wizard["fase"] = "valor"
+        wizard["campo_key"] = key
+        await update.message.reply_text(
+            f"Nuevo valor para: {label}\n"
+            f"(una linea; '-' para vaciar fecha/tipo)\n/cancelarmodfab para abortar."
+        )
+        return True
+
+    key = wizard.get("campo_key")
+    if not key:
+        wizard["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_fabrica(iid))
+        return True
+
+    it0 = buscar_fabrica_por_id(iid)
+    if not it0:
+        context.chat_data.pop(WIZARD_MOD_FABRICA_KEY, None)
+        await update.message.reply_text("Registro no encontrado; wizard cerrado.")
+        return True
+
+    val_raw = "" if text == "-" else text
+    if key == "fecha_due":
+        norm = _normalizar_fecha_input_fabrica(val_raw)
+        if norm is None:
+            await update.message.reply_text(
+                "Fecha no reconocida. Prueba DD-MM-AAAA, mañana, martes, etc., o '-' sin fecha."
+            )
+            return True
+        val_store = norm
+    elif key == "tipo":
+        if not val_raw:
+            val_store = ""
+        else:
+            nt = _normalizar_tipo_input_fabrica(val_raw)
+            if nt is None:
+                await update.message.reply_text("Tipo invalido. Usa: laser, 3d o '-'")
+                return True
+            val_store = nt
+    else:
+        val_store = val_raw
+
+    if not actualizar_fabrica_campos(iid, {key: val_store}):
+        await update.message.reply_text("No se pudo guardar.")
+        context.chat_data.pop(WIZARD_MOD_FABRICA_KEY, None)
+        return True
+
+    it1 = buscar_fabrica_por_id(iid)
+    if it1:
+        deck_ok = await _sincronizar_fabrica_a_deck(it1)
+        if not deck_ok and (it1.board_id and it1.card_id):
+            await update.message.reply_text(
+                "(Aviso: no se pudo actualizar la tarjeta en Deck; datos guardados en CSV.)"
+            )
+
+    wizard["fase"] = "menu"
+    wizard.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_fabrica(iid)
+    )
+    return True
+
+
+async def cmd_modfab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modfab <numero>\nEl numero es el de /listfab en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    it: ItemFabrica | None = None
+    if arg.isdigit():
+        it = _fabrica_desde_indice_listado(context, int(arg))
+    if it is None:
+        it = buscar_fabrica_por_id(arg)
+    if not it:
+        await update.message.reply_text(
+            "No se encontro ese registro.\nUsa /listfab en este chat."
+        )
+        return
+    user = update.effective_user
+    if not user:
+        return
+    context.chat_data[WIZARD_MOD_FABRICA_KEY] = {
+        "user_id": user.id,
+        "item_id": it.id,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_fabrica(it.id) + "\n\n/cancelarmodfab para salir."
+    )
+
+
+async def cmd_cancelarmodfab(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_FABRICA_KEY, None)
+    await update.message.reply_text("Edicion de fabricacion cancelada.")
+
+
 async def _ejecutar_creacion_evento_desde_texto(update: Update, texto_raw: str) -> bool:
     """Crea evento CalDAV desde texto ya sin prefijo /evento. Devuelve True si se creó."""
     nombre, fecha_ev, hora_ev = _parsear_args_evento(texto_raw)
@@ -2571,7 +3148,8 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             "Uso: /evento <nombre> <fecha> [HH:MM]\n"
             "Fecha: DD-MM-AAAA o DD/MM/AAAA; año 2 cifras -> 20YY; DD-MM sin año = año actual; "
-            "solo DD (1-31, unico en el texto) = mes actual; o antier/ayer/hoy/mañana/pasado.\n"
+            "solo DD (1-31, unico en el texto) = mes actual; antier/ayer/hoy/mañana/pasado; "
+            "o nombre de dia (proximo lunes, martes, …).\n"
             "Ejemplo: /evento Reunion 20-03-26 14:30"
         )
         return
@@ -3166,7 +3744,7 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if len(args) < 2:
         await update.message.reply_text(
             "Uso: /mvpendiente <n|id> <tipo> [args extra]\n"
-            "tipo: idea, memoria, tarea, evento, funcionalidad (o func), investiga, comprar, diario\n"
+            "tipo: idea, memoria, tarea, evento, funcionalidad (o func), investiga, comprar, fabrica (o fab), diario\n"
             "Ejemplo: /mvpendiente 1 tarea \"Titulo\" 25-03-2026"
         )
         return
@@ -3174,6 +3752,8 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     tipo_in = args[1].strip().lower()
     extras = args[2:]
     tipo = "funcionalidad" if tipo_in == "func" else tipo_in
+    if tipo == "fab":
+        tipo = "fabrica"
     if tipo not in _TIPOS_MV_VALIDOS:
         await update.message.reply_text(
             f"Tipo no valido: {tipo_in}. Usa: {', '.join(sorted(_TIPOS_MV_VALIDOS))} o func"
@@ -3218,6 +3798,12 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             combo,
             stack_name=DECK_STACK_COMPRAR,
             prefijo_exito="Compra anotada",
+        ):
+            ok_fin = True
+    elif tipo == "fabrica":
+        msg_f = await update.message.reply_text("Creando fabricacion...")
+        if await _crear_fabrica_desde_texto(
+            update, combo, fuente="telegram_mvpendiente", msg_trabajo=msg_f
         ):
             ok_fin = True
     elif tipo == "evento":
@@ -3920,6 +4506,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if await _manejar_wizard_mod_factura(update, context):
         return
+    if await _manejar_wizard_mod_fabrica(update, context):
+        return
     if await _manejar_wizard_proyecto(update, context):
         return
     texto = update.message.text or ""
@@ -3986,6 +4574,15 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 await estado.edit_text("La memoria no puede estar vacia. Di: memoria <texto>")
                 return
             mem = _guardar_memoria(contenido, fuente="telegram_audio")
+            try:
+                md_path = _ruta_archivo_memoria(mem.ruta)
+                stem = md_path.stem
+                dest_audio = md_path.parent / f"{stem}{sufijo}"
+                if dest_audio.exists():
+                    dest_audio = md_path.parent / f"{stem}_audio{sufijo}"
+                shutil.copy2(ruta_tmp, dest_audio)
+            except OSError:
+                pass
             await estado.edit_text(
                 f"Memoria guardada desde audio.\nResumen: {mem.resumen}"
             )
@@ -4022,7 +4619,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             titulo_t, fecha_t, descripcion_t = _parsear_tarea_audio_payload(contenido)
             if not titulo_t:
                 await estado.edit_text(
-                    "La tarea no puede estar vacia. Di: tarea <titulo> [para el DD-MM-AAAA ...]"
+                    "La tarea no puede estar vacia. Di: tarea <titulo> [para|para el fecha o dia]"
                 )
                 return
             if fecha_t:
@@ -4031,10 +4628,10 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 except ValueError:
                     await estado.edit_text(
                         f"Fecha invalida en audio: {fecha_t}\n"
-                        "Tras 'para el': DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
+                        "Tras 'para'/'para el': DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD, hoy/mañana o día de la semana"
                     )
                     return
-            ok = crear_tarea_deck(
+            ok, _, _, _ = crear_tarea_deck(
                 titulo_t,
                 descripcion=descripcion_t,
                 fecha_due=fecha_t,
@@ -4062,7 +4659,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             titulo_c, fecha_c, descripcion_c = _parsear_tarea_audio_payload(contenido)
             if not titulo_c:
                 await estado.edit_text(
-                    f'La compra no puede estar vacia. Di: comprar <titulo> [para el fecha]\n'
+                    f'La compra no puede estar vacia. Di: comprar <titulo> [para|para el fecha]\n'
                     f'(columna Deck "{DECK_STACK_COMPRAR}")'
                 )
                 return
@@ -4072,10 +4669,10 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 except ValueError:
                     await estado.edit_text(
                         f"Fecha invalida en audio: {fecha_c}\n"
-                        "Tras 'para el': DD-MM-AAAA, DD-MM, DD o YYYY-MM-DD"
+                        "Tras 'para'/'para el': DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD, hoy/mañana o día de la semana"
                     )
                     return
-            ok = crear_tarea_deck(
+            ok, _, _, _ = crear_tarea_deck(
                 titulo_c,
                 descripcion=descripcion_c,
                 fecha_due=fecha_c,
@@ -4100,12 +4697,27 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"{deck_error or 'sin detalle'}"
                 )
 
+        elif accion in ("fabrica", "fab"):
+            if not contenido.strip():
+                await estado.edit_text(
+                    "Di fabrica o fab seguido del encargo (medidas, laser o 3d y fecha opcionales)."
+                )
+                return
+            await _crear_fabrica_desde_texto(
+                update,
+                contenido.strip(),
+                fuente="telegram_audio",
+                msg_trabajo=estado,
+            )
+            return
+
         elif accion == "evento":
             nombre_ev, fecha_ev, hora_ev = _parsear_evento_audio_payload(contenido)
             if not fecha_ev:
                 await estado.edit_text(
-                    "El evento necesita fecha. Por voz usa: evento <nombre> para el 20-03 [15:30].\n"
-                    "Sin 'para el': nombre y fecha en una frase (ej. reunion 20-03 15:30)."
+                    "El evento necesita fecha. Por voz: evento <nombre> para|para el 20-03 [15:30], "
+                    "para mañana o para el viernes.\n"
+                    "Sin separador: nombre y fecha en una frase (ej. reunion 20-03 15:30)."
                 )
                 return
             if not nombre_ev:
@@ -4215,7 +4827,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Guardado en pendientes (sin accion reconocida en el audio).\n"
                 f"ID: {pend.id}\n"
                 f"Usa /listpendientes y /mvpendiente <n|id> <tipo> [args extra]\n"
-                f"Tipos: idea, memoria, tarea, evento, funcionalidad, func, investiga, comprar, diario"
+                f"Tipos: idea, memoria, tarea, evento, funcionalidad, func, investiga, comprar, fabrica, fab, diario"
             )
 
     except Exception as exc:
@@ -4265,7 +4877,8 @@ def main() -> None:
     app.add_handler(CommandHandler("rmmemoria", cmd_rmmemoria))
     app.add_handler(CommandHandler("proyecto", cmd_proyecto))
     app.add_handler(CommandHandler("cancelarproyecto", cmd_cancelarproyecto))
-    app.add_handler(CommandHandler("listproyecto", cmd_listproyecto))
+    app.add_handler(CommandHandler("listproyectos", cmd_listproyectos))
+    app.add_handler(CommandHandler("listproyecto", cmd_listproyectos))
     app.add_handler(CommandHandler("verproyecto", cmd_verproyecto))
     app.add_handler(CommandHandler("rmproyecto", cmd_rmproyecto))
     app.add_handler(CommandHandler("tiempo", cmd_tiempo))
@@ -4286,6 +4899,13 @@ def main() -> None:
     app.add_handler(CommandHandler("rmfunc", cmd_rmfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
     app.add_handler(CommandHandler("comprar", cmd_comprar))
+    app.add_handler(CommandHandler("fabrica", cmd_fabrica))
+    app.add_handler(CommandHandler("fab", cmd_fab))
+    app.add_handler(CommandHandler("listfab", cmd_listfab))
+    app.add_handler(CommandHandler("verfab", cmd_verfab))
+    app.add_handler(CommandHandler("modfab", cmd_modfab))
+    app.add_handler(CommandHandler("rmfab", cmd_rmfab))
+    app.add_handler(CommandHandler("cancelarmodfab", cmd_cancelarmodfab))
     app.add_handler(CommandHandler("evento", cmd_evento))
     app.add_handler(CommandHandler("listeventos", cmd_listeventos))
     app.add_handler(CommandHandler("informame", cmd_informame))

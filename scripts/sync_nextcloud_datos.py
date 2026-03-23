@@ -79,6 +79,11 @@ def sync_nextcloud_datos() -> dict:
             config.CSV_MEMORIAS,
             "memorias.csv",
         )
+    if config.CSV_FABRICA.exists():
+        resultados["fabrica_csv"] = _subir_csv_si_existe(
+            config.CSV_FABRICA,
+            "fabrica.csv",
+        )
 
     ideas_total, ideas_subidas = 0, 0
     if config.CARPETA_IDEAS.exists():

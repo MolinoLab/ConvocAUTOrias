@@ -95,6 +95,7 @@ NEXTCLOUD_DATOS_CSV_PATH = os.getenv(
 ).strip().strip("/")
 DECK_BOARD_NAME = os.getenv("DECK_BOARD_NAME", "MolinoLab").strip()
 DECK_STACK_NAME = os.getenv("DECK_STACK_NAME", "").strip()
+DECK_STACK_FABRICAR = os.getenv("DECK_STACK_FABRICAR", "Fabricar").strip()
 
 # JSON: {"telegram_username_sin_arroba": "nextcloud_uid", ...}
 _deck_assign_raw = os.getenv("DECK_ASSIGNEE_BY_TELEGRAM_USERNAME", "").strip()
@@ -178,6 +179,7 @@ CSV_CONTABILIDAD = DATA_DIR / "contabilidad.csv"
 CSV_MEMORIAS = DATA_DIR / "memorias.csv"
 CARPETA_MEMORIAS = DATA_DIR / "memorias"
 CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
+CSV_FABRICA = DATA_DIR / "fabrica.csv"
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
