@@ -103,6 +103,16 @@ def buscar_por_id(id_buscar: str) -> Idea | None:
     return None
 
 
+def actualizar_idea(idea: Idea) -> bool:
+    ideas = leer_ideas()
+    for i, x in enumerate(ideas):
+        if x.id == idea.id:
+            ideas[i] = idea
+            escribir_ideas(ideas)
+            return True
+    return False
+
+
 def buscar_por_ruta(ruta_buscar: str) -> Idea | None:
     for idea in leer_ideas():
         if idea.ruta == ruta_buscar:

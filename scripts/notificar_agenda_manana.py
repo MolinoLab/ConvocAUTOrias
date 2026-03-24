@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.caldav_client import listar_eventos_en_ventana, listar_tareas
 from src.deck_client import listar_tareas_deck
+from src.fecha_display import formatear_dia_mes_sin_anio
 from src.notifier import enviar_mensaje_a_chats
 
 MADRID = ZoneInfo("Europe/Madrid")
@@ -35,17 +36,25 @@ def main() -> int:
     win_start = datetime.combine(d_manana, time.min)
     win_end_excl = win_start + timedelta(days=1)
 
-    eventos = listar_eventos_en_ventana(win_start, win_end_excl)
+    eventos = listar_eventos_en_ventana(win_start, win_end_excl, agenda_telegram_username=None)
     deck = [t for t in listar_tareas_deck() if (t.get("due") or "") == iso]
-    vtodos = [t for t in listar_tareas(include_completed=False) if (t.get("due") or "") == iso]
+    vtodos = [
+        t
+        for t in listar_tareas(include_completed=False, agenda_telegram_username=None)
+        if (t.get("due") or "") == iso
+    ]
 
     if not eventos and not deck and not vtodos:
-        print(f"Nada pendiente para mañana ({iso}, Madrid). No se envia Telegram.")
+        print(
+            f"Nada pendiente para mañana ({formatear_dia_mes_sin_anio(iso)}, Madrid). "
+            "No se envia Telegram."
+        )
         return 0
 
+    iso_show = formatear_dia_mes_sin_anio(iso)
     lineas = [
-        f"Recordatorio: agenda para mañana ({iso}, hora Europa/Madrid).\n",
-        "Resumen automático; en el bot usa /informame para ver los próximos 7 días.\n",
+        f"Recordatorio: agenda para mañana ({iso_show}, hora Europa/Madrid).\n",
+        "Resumen automático; en el bot usa /informame o /info [días] (calendarios de equipo).\n",
     ]
 
     if eventos:
@@ -53,7 +62,8 @@ def main() -> int:
         for ev in eventos:
             cal = ev.get("calendario")
             suf = f" ({cal})" if cal else ""
-            lineas.append(f"  • [{ev['start_iso']}]{suf} {ev['summary']}")
+            fh = formatear_dia_mes_sin_anio(ev["start_iso"])
+            lineas.append(f"  • [{fh}]{suf} {ev['summary']}")
         lineas.append("")
 
     if deck:

@@ -30,9 +30,36 @@ def fecha_hoy_relativas() -> date:
     return datetime.now(_zona()).date()
 
 
+def formatear_dia_mes_sin_anio(valor: str) -> str:
+    """
+    Para listados de agenda: orden DD, MM sin año (YYYY-MM-DD o YYYY-MM-DD HH:MM).
+    Ej.: 2026-03-24 -> 24, 03; 2026-03-24 14:30 -> 24, 03 14:30
+    """
+    s = (valor or "").strip()
+    if not s:
+        return s
+    if " " in s:
+        fecha_part, hora_part = s.split(" ", 1)
+        hora_part = hora_part.strip()
+    else:
+        fecha_part, hora_part = s, ""
+    partes = fecha_part.split("-")
+    if len(partes) != 3 or not all(p.isdigit() for p in partes):
+        return valor
+    y, mo, d = (int(partes[0]), int(partes[1]), int(partes[2]))
+    try:
+        datetime(y, mo, d)
+    except ValueError:
+        return valor
+    out = f"{d:02d}, {mo:02d}"
+    if hora_part:
+        out = f"{out} {hora_part}"
+    return out
+
+
 def formatear_fecha_ver(valor: str) -> str:
     """
-    Convierte ISO (con o sin Z, con o sin microsegundos) a DD-MM-YYYY o DD-MM-YYYY HH:MM.
+    Convierte ISO (con o sin Z, con o sin microsegundos) a DD, MM (sin año) o DD, MM HH:MM.
     Si no parsea como ISO, devuelve el string original.
     """
     s = (valor or "").strip()
@@ -49,8 +76,8 @@ def formatear_fecha_ver(valor: str) -> str:
         dt = dt.replace(tzinfo=_zona())
     base = raw.split("+", 1)[0].strip()
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", base):
-        return dt.strftime("%d-%m-%Y")
-    return dt.strftime("%d-%m-%Y %H:%M")
+        return dt.strftime("%d, %m")
+    return dt.strftime("%d, %m %H:%M")
 
 
 def _match_span(texto: str, pattern: re.Pattern) -> re.Match | None:

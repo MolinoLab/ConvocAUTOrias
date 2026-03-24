@@ -90,6 +90,16 @@ def buscar_por_id(id_buscar: str) -> Memoria | None:
     return None
 
 
+def actualizar_memoria(m: Memoria) -> bool:
+    memorias = leer_memorias()
+    for i, x in enumerate(memorias):
+        if x.id == m.id:
+            memorias[i] = m
+            escribir_memorias(memorias)
+            return True
+    return False
+
+
 def eliminar_por_id(id_buscar: str) -> Memoria | None:
     memorias = leer_memorias()
     removed: Memoria | None = None

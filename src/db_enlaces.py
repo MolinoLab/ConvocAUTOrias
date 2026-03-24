@@ -99,6 +99,16 @@ def buscar_enlace_por_id(id_buscar: str) -> Enlace | None:
     return None
 
 
+def actualizar_enlace(enlace: Enlace) -> bool:
+    items = leer_enlaces()
+    for i, x in enumerate(items):
+        if x.id == enlace.id:
+            items[i] = enlace
+            escribir_enlaces(items)
+            return True
+    return False
+
+
 def buscar_enlace_por_url(url_buscar: str) -> Enlace | None:
     u = (url_buscar or "").strip()
     if not u:

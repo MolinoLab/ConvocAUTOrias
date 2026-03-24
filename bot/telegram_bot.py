@@ -23,9 +23,17 @@ from telegram.ext import Application, CommandHandler, MessageHandler, ContextTyp
 from telegram.error import Conflict
 
 import config
-from src.db import Convocatoria, añadir, buscar_por_id, eliminar_por_id, listar
+from src.db import (
+    Convocatoria,
+    añadir,
+    actualizar as actualizar_convocatoria_registro,
+    buscar_por_id,
+    eliminar_por_id,
+    listar,
+)
 from src.db_ideas import (
     Idea,
+    actualizar_idea,
     añadir_idea,
     buscar_por_id as buscar_idea_por_id,
     eliminar_por_id as eliminar_idea_por_id,
@@ -33,6 +41,7 @@ from src.db_ideas import (
 )
 from src.db_memorias import (
     Memoria,
+    actualizar_memoria,
     añadir_memoria,
     buscar_por_id as buscar_memoria_por_id,
     eliminar_por_id as eliminar_memoria_por_id,
@@ -42,19 +51,23 @@ from src.db_funcionalidad import (
     Funcionalidad,
     ESTADOS_VALIDOS,
     añadir as añadir_func,
+    actualizar as actualizar_func,
     buscar_por_id as buscar_func_por_id,
     listar as listar_func,
     eliminar as eliminar_func_db,
 )
 from src.db_investigaciones import (
+    ESTADOS_INVESTIGACION,
     Investigacion,
     añadir as añadir_investigacion,
+    actualizar as actualizar_investigacion_registro,
     buscar_por_id as buscar_investigacion_por_id,
     eliminar as eliminar_investigacion_db,
     listar as listar_investigaciones,
 )
 from src.db_enlaces import (
     Enlace,
+    actualizar_enlace,
     añadir_enlace,
     buscar_enlace_por_id,
     buscar_enlace_por_url,
@@ -94,6 +107,7 @@ from src.db_huevos import (
 )
 from src.db_pendientes import (
     Pendiente,
+    actualizar_pendiente,
     añadir as añadir_pendiente,
     buscar_por_id as buscar_pendiente_por_id,
     eliminar as eliminar_pendiente_db,
@@ -133,6 +147,7 @@ from src.fecha_display import (
     extraer_fecha_natural_dd_mm_yyyy_y_resto,
     extraer_fecha_relativa_dd_mm_yyyy,
     fecha_hoy_relativas,
+    formatear_dia_mes_sin_anio,
     formatear_fecha_ver,
     extraer_fecha_relativa_iso_y_resto,
     strip_sufijo_para_el,
@@ -186,6 +201,7 @@ WIZARD_PROYECTO_KEY = "proyecto_wizard"
 WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
 WIZARD_MOD_FABRICA_KEY = "mod_fabrica_wizard"
 WIZARD_MOD_PROYECTO_KEY = "mod_proyecto_wizard"
+WIZARD_MOD_LISTA_KEY = "mod_lista_wizard"
 ESPERANDO_FACTURA_KEY = "esperando_factura"
 
 CAMPOS_MOD_FABRICA: list[tuple[str, str]] = [
@@ -205,6 +221,84 @@ CAMPOS_MOD_PROYECTO: list[tuple[str, str]] = [
     ("estado", "Estado (idea|activo|en_espera|presupuestado|completado|cancelado)"),
     ("tags", "Tags (coma separadas; - vaciar)"),
 ]
+
+# /modconvo, /modidea, … — cache del ultimo /list* en el chat
+MOD_LISTA_CAMPOS: dict[str, tuple[str, list[tuple[str, str]], str]] = {
+    "convo": (
+        CACHE_RM_CONVOS,
+        [
+            ("url", "URL"),
+            ("titulo", "Titulo"),
+            ("descripcion", "Descripcion"),
+            ("plazo_fin", "Plazo fin (texto o fecha)"),
+            ("requisitos", "Requisitos"),
+            ("estado", "Estado (ej. pendiente)"),
+            ("fuente", "Fuente"),
+        ],
+        "/listconvo",
+    ),
+    "idea": (
+        CACHE_RM_IDEAS,
+        [
+            ("resumen", "Resumen"),
+            ("tags", "Tags"),
+            ("categorias", "Categorias"),
+            ("presupuesto_aproximado", "Presupuesto aproximado"),
+            ("ruta", "Ruta .md"),
+            ("fuente", "Fuente"),
+        ],
+        "/listideas",
+    ),
+    "memoria": (
+        CACHE_RM_MEMORIAS,
+        [
+            ("resumen", "Resumen"),
+            ("ruta", "Ruta .md"),
+            ("fuente", "Fuente"),
+        ],
+        "/listmemorias",
+    ),
+    "func": (
+        CACHE_RM_FUNC_IDS,
+        [
+            ("texto", "Texto"),
+            ("prioridad", "Prioridad (1-5)"),
+            ("estado", "Estado (pendiente|en_progreso|hecha)"),
+            ("fuente", "Fuente"),
+        ],
+        "/listfunc",
+    ),
+    "inv": (
+        CACHE_RM_INVESTIGACIONES,
+        [
+            ("estado", "Estado (pendiente|investigado|enviado|error)"),
+            ("concepto", "Concepto"),
+            ("resumen", "Resumen"),
+            ("link", "Link"),
+            ("archivo", "Archivo .md"),
+        ],
+        "/listinvestigaciones",
+    ),
+    "enlace": (
+        CACHE_RM_ENLACES,
+        [
+            ("url", "URL"),
+            ("tags", "Tags"),
+            ("categorias", "Categorias"),
+            ("notas", "Notas"),
+            ("fuente", "Fuente"),
+        ],
+        "/listurl",
+    ),
+    "pendiente": (
+        CACHE_RM_PENDIENTES_IDS,
+        [
+            ("texto", "Texto transcrito"),
+            ("fuente", "Fuente"),
+        ],
+        "/listpendientes",
+    ),
+}
 
 FAB_RESUMEN_LISTA_MAX = 72
 
@@ -300,6 +394,19 @@ async def _rechazar_no_autorizado(update: Update) -> None:
     msg = getattr(update, "message", None)
     if msg:
         await msg.reply_text("Este bot está restringido a un usuario autorizado.")
+
+
+def _es_mantener_wizard_valor(texto: str) -> bool:
+    """Telegram no permite mensaje vacío: . .. igual = mantienen el valor actual."""
+    t = (texto or "").strip().lower()
+    return t in (".", "..", "igual", "=", "mismo", "ok")
+
+
+def _username_telegram_para_agenda(update: Update) -> str | None:
+    u = update.effective_user
+    if not u or not (u.username or "").strip():
+        return None
+    return u.username.strip().lower().lstrip("@")
 
 
 def _deck_uids_para_update(update: Update | None) -> list[str]:
@@ -512,22 +619,26 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/convo <url> — Añade convocatoria por URL\n"
         "/listconvo — Lista futuras por proximidad\n"
         "/verconvo <numero> — Detalle (numero del ultimo /listconvo en este chat)\n"
+        "/modconvo <numero> — Edicion guiada por campo (/cancelarmodlista)\n"
         "/rmconvo <num ...> — Elimina una o varias por numero del listado\n\n"
         "[Enlaces sin categorizar]\n"
         "/url <https://...> [notas] — Guardar en enlaces.csv (tags/categorias en el CSV)\n"
         "URL suelta (sin comando) — Se guarda igual que /url\n"
         "/listurl — Listar enlaces\n"
         "/verurl <numero>\n"
+        "/modenlace <numero> — Edicion guiada (/cancelarmodlista)\n"
         "/rmurl <num ...>\n\n"
         "[Ideas]\n"
         "/idea <texto> — Guardar\n"
         "/listideas — Listar (recientes primero)\n"
         "/veridea <numero>\n"
+        "/modidea <numero> — Edicion guiada (/cancelarmodlista)\n"
         "/rmidea <num ...>\n\n"
         "[Memorias]\n"
         "/memoria <texto> — Guardar (resumen en CSV, desarrollo en data/memorias/)\n"
         "/listmemorias — Listar (recientes primero)\n"
         "/vermemoria <numero>\n"
+        "/modmemoria <numero> — Edicion guiada (/cancelarmodlista)\n"
         "/rmmemoria <num ...>\n\n"
         "[Proyectos]\n"
         "/proyecto — Alta guiada (titulo, contacto, presupuesto, fecha entrega, estado, tags, .md). "
@@ -548,11 +659,13 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/func <texto> [prioridad 1-5] — Registrar (prioridad por defecto 3)\n"
         "/listfunc o /listfuncionalidades — Listar por prioridad\n"
         "/verfunc <numero>\n"
+        "/modfunc <numero> — Edicion guiada (/cancelarmodlista)\n"
         "/rmfunc <num ...>\n\n"
         "[Investigaciones]\n"
         "/investiga <concepto o frase> — Encola investigación (CSV + proceso automático)\n"
         "/listinvestigaciones — Listar (recientes primero)\n"
         "/verinvestigacion <numero|id> — Detalle CSV + contenido del .md si existe\n"
+        "/modinv <numero> — Edicion guiada (/cancelarmodlista)\n"
         "/rminvestigacion <numero ...> — Borrar fila y .md asociado\n\n"
         "[Tareas Deck]\n"
         '/tarea "Titulo" [fecha] ["Desc"] — Tarjeta (columna por defecto)\n'
@@ -571,7 +684,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/evento <nombre> <fecha> [hora] [duracion] — Crear; hora HH:MM o coloquial (a las 5 y media de la tarde); "
         "duracion: durante N horas/dias/minutos (con hora; si no, 1 h)\n"
         "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
-        "/informame — Eventos y tareas (Deck + VTODO) en los proximos 7 dias\n"
+        "/informame — Agenda proximos 7 dias (CalDAV equipo + personal si aplica + Deck + VTODO)\n"
+        "/info [dias] — Igual que /informame; dias por defecto 7 (max 90)\n"
         "/verevento <numero>\n"
         "/rmevento <num ...>\n\n"
         "[Huevos]\n"
@@ -590,6 +704,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Audio sin comando reconocido -> pendientes.csv\n"
         "/listpendientes — Listar (recientes primero)\n"
         "/verpendiente <n|id>\n"
+        "/modpendiente <n> — Edicion guiada (/cancelarmodlista)\n"
         "/rmpendientes <n ...>\n"
         "/mvpendiente <n|id> <tipo> [args extra] — idea, memoria, tarea, evento, funcionalidad, "
         "investiga, comprar, fabrica, diario (func = funcionalidad, fab = fabrica)\n\n"
@@ -603,7 +718,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "tambien YYYY-MM-DD; palabras: antier, ayer, hoy, mañana, pasado (pasado mañana); "
         "y en español: 12 de febrero de 2026, 12 del 2 del 2026, 3 de marzo.\n"
         "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
-        "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
+        "en listados se muestran como DD, MM (sin año) u DD, MM HH:MM.\n\n"
         "[Atajos de comandos]\n"
         "/ls… equivale a /list… (ej. /lsconvo, /lscv, /lsfn). /v… a /ver… (ej. /vconvo, /vcv).\n"
         "Convocatorias: /lscv, /vcv. Ideas: /lsid, /vid. Memorias: /lsmm, /vmm.\n"
@@ -641,7 +756,7 @@ def _obtener_futuras_ordenadas() -> list[Convocatoria]:
 def _formato_plazo(plazo_fin: str) -> str:
     fecha = parsear_plazo(plazo_fin)
     if fecha:
-        return fecha.strftime("%d/%m/%Y")
+        return f"{fecha.day:02d}, {fecha.month:02d}"
     return plazo_fin.strip() if plazo_fin.strip() else "Sin fecha"
 
 
@@ -3193,7 +3308,7 @@ async def _manejar_wizard_mod_fabrica(
         wizard["campo_key"] = key
         await update.message.reply_text(
             f"Nuevo valor para: {label}\n"
-            f"(una linea; '-' para vaciar fecha/tipo)\n/cancelarmodfab para abortar."
+            f"(una linea; '-' vaciar fecha/tipo; . o = mantener)\n/cancelarmodfab para abortar."
         )
         return True
 
@@ -3201,6 +3316,14 @@ async def _manejar_wizard_mod_fabrica(
     if not key:
         wizard["fase"] = "menu"
         await update.message.reply_text(_texto_menu_mod_fabrica(iid))
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        wizard["fase"] = "menu"
+        wizard.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios en ese campo.\n\n" + _texto_menu_mod_fabrica(iid)
+        )
         return True
 
     it0 = buscar_fabrica_por_id(iid)
@@ -3336,7 +3459,7 @@ async def _manejar_wizard_mod_proyecto(
         wizard["campo_key"] = _key
         await update.message.reply_text(
             f"Nuevo valor para: {label}\n"
-            f"(una linea; '-' para vaciar donde aplique)\n/cancelarmodproyecto para abortar."
+            f"(una linea; '-' vaciar; . o = mantener)\n/cancelarmodproyecto para abortar."
         )
         return True
 
@@ -3344,6 +3467,14 @@ async def _manejar_wizard_mod_proyecto(
     if not key:
         wizard["fase"] = "menu"
         await update.message.reply_text(_texto_menu_mod_proyecto(pid))
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        wizard["fase"] = "menu"
+        wizard.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios en ese campo.\n\n" + _texto_menu_mod_proyecto(pid)
+        )
         return True
 
     p0 = buscar_proyecto_por_id(pid)
@@ -3532,7 +3663,8 @@ async def cmd_listeventos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     dias = _dias_ventana_eventos(list(context.args or []))
     msg = await update.message.reply_text("Consultando eventos en CalDAV...")
 
-    eventos = listar_eventos_proximos_dias(dias)
+    un_ag = _username_telegram_para_agenda(update)
+    eventos = listar_eventos_proximos_dias(dias, agenda_telegram_username=un_ag)
     if context.chat_data is not None:
         context.chat_data[CACHE_RM_EVENTOS] = [str(e.get("url") or "") for e in eventos]
 
@@ -3547,7 +3679,8 @@ async def cmd_listeventos(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     lineas: list[str] = []
     for i, ev in enumerate(eventos, 1):
         tit = ev["summary"][:70] + "..." if len(ev["summary"]) > 70 else ev["summary"]
-        lineas.append(f"{i}. [{ev['start_iso']}] {tit}")
+        fh = formatear_dia_mes_sin_anio(ev["start_iso"])
+        lineas.append(f"{i}. [{fh}] {tit}")
 
     cabecera = f"Eventos proximos {dias} dias ({len(eventos)}):\n\n"
     texto_completo = cabecera + "\n".join(lineas)
@@ -3565,9 +3698,305 @@ async def cmd_informame(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _rechazar_no_autorizado(update)
         return
     msg = await update.message.reply_text("Consultando agenda (7 dias)...")
-    texto = texto_agenda_proximos_dias(7)
+    un_ag = _username_telegram_para_agenda(update)
+    texto = texto_agenda_proximos_dias(7, telegram_username=un_ag)
     await msg.delete()
     await _reply_texto_largo(update, texto)
+
+
+async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    dias = 7
+    if context.args:
+        a0 = (context.args[0] or "").strip()
+        if a0.isdigit():
+            dias = max(1, min(90, int(a0)))
+        else:
+            await update.message.reply_text(
+                "Uso: /info [numero de dias]\nPor defecto 7 dias (maximo 90)."
+            )
+            return
+    msg = await update.message.reply_text(f"Consultando agenda ({dias} dias)...")
+    un_ag = _username_telegram_para_agenda(update)
+    texto = texto_agenda_proximos_dias(dias, telegram_username=un_ag)
+    await msg.delete()
+    await _reply_texto_largo(update, texto)
+
+
+def _texto_menu_mod_lista(kind: str, entity_id: str) -> str:
+    _cache_key, campos, lista_cmd = MOD_LISTA_CAMPOS[kind]
+    lineas = [
+        f"Modificando {kind} (id {entity_id}). Elige campo (0 = salir):",
+    ]
+    for i, (_k, label) in enumerate(campos, 1):
+        lineas.append(f"{i}. {label}")
+    return "\n".join(lineas)
+
+
+def _entidad_mod_lista_por_id(kind: str, eid: str):
+    if kind == "convo":
+        return buscar_por_id(eid)
+    if kind == "idea":
+        return buscar_idea_por_id(eid)
+    if kind == "memoria":
+        return buscar_memoria_por_id(eid)
+    if kind == "func":
+        return buscar_func_por_id(eid)
+    if kind == "inv":
+        return buscar_investigacion_por_id(eid)
+    if kind == "enlace":
+        return buscar_enlace_por_id(eid)
+    if kind == "pendiente":
+        return buscar_pendiente_por_id(eid)
+    return None
+
+
+def _guardar_entidad_mod_lista(kind: str, ent) -> bool:
+    if kind == "convo":
+        return actualizar_convocatoria_registro(ent)
+    if kind == "idea":
+        return actualizar_idea(ent)
+    if kind == "memoria":
+        return actualizar_memoria(ent)
+    if kind == "func":
+        return actualizar_func(ent)
+    if kind == "inv":
+        return actualizar_investigacion_registro(ent)
+    if kind == "enlace":
+        return actualizar_enlace(ent)
+    if kind == "pendiente":
+        return actualizar_pendiente(ent)
+    return False
+
+
+def _id_desde_indice_mod_lista(context: ContextTypes.DEFAULT_TYPE, kind: str, indice: int) -> str | None:
+    cache_key, _, _ = MOD_LISTA_CAMPOS[kind]
+    cache = (context.chat_data or {}).get(cache_key) or []
+    if indice < 1 or indice > len(cache):
+        return None
+    return str(cache[indice - 1])
+
+
+async def _iniciar_mod_lista(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, kind: str, cmd_name: str
+) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or context.chat_data is None:
+        _ck, _cf, lista_cmd = MOD_LISTA_CAMPOS[kind]
+        await update.message.reply_text(
+            f"Uso: /{cmd_name} <numero>\nEl numero es el de {lista_cmd} en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    ent = None
+    eid: str | None = None
+    if arg.isdigit():
+        eid = _id_desde_indice_mod_lista(context, kind, int(arg))
+        if eid:
+            ent = _entidad_mod_lista_por_id(kind, eid)
+    if ent is None:
+        ent = _entidad_mod_lista_por_id(kind, arg)
+        if ent:
+            eid = ent.id
+    if not ent or not eid:
+        _ck, _cf, lista_cmd = MOD_LISTA_CAMPOS[kind]
+        await update.message.reply_text(
+            f"No se encontro ese registro.\nUsa {lista_cmd} en este chat."
+        )
+        return
+    user = update.effective_user
+    if not user:
+        return
+    context.chat_data[WIZARD_MOD_LISTA_KEY] = {
+        "user_id": user.id,
+        "kind": kind,
+        "entity_id": eid,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_lista(kind, eid) + "\n\n/cancelarmodlista para salir."
+    )
+
+
+async def _manejar_wizard_mod_lista(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    wizard = context.chat_data.get(WIZARD_MOD_LISTA_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or wizard.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        await update.message.reply_text("Envia texto, o /cancelarmodlista.")
+        return True
+    kind: str = wizard["kind"]
+    eid: str = wizard["entity_id"]
+    fase = wizard.get("fase", "menu")
+    _ck, campos, _lc = MOD_LISTA_CAMPOS[kind]
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_LISTA_KEY, None)
+            await update.message.reply_text("Listo (sin mas cambios).")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Envia un numero de campo o 0 para salir.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(campos):
+            await update.message.reply_text("Numero invalido.")
+            return True
+        _key, label = campos[n - 1]
+        wizard["fase"] = "valor"
+        wizard["campo_key"] = _key
+        await update.message.reply_text(
+            f"Nuevo valor para: {label}\n"
+            f"(una linea; '-' vacia donde aplique; . o = deja el valor actual)\n"
+            f"/cancelarmodlista para abortar."
+        )
+        return True
+
+    key = wizard.get("campo_key")
+    if not key:
+        wizard["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_lista(kind, eid))
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        wizard["fase"] = "menu"
+        wizard.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios en ese campo.\n\n" + _texto_menu_mod_lista(kind, eid)
+        )
+        return True
+
+    ent0 = _entidad_mod_lista_por_id(kind, eid)
+    if not ent0:
+        context.chat_data.pop(WIZARD_MOD_LISTA_KEY, None)
+        await update.message.reply_text("Registro no encontrado; wizard cerrado.")
+        return True
+
+    val_raw = "" if text in ("-", "—") else text
+    err: str | None = None
+    ent1 = ent0
+
+    if kind == "convo":
+        if key == "titulo" and not val_raw:
+            err = "El titulo no puede estar vacio."
+        elif key == "url" and not val_raw:
+            err = "La URL no puede estar vacia."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "idea":
+        if key == "resumen" and not val_raw:
+            err = "El resumen no puede estar vacio."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "memoria":
+        if key == "resumen" and not val_raw:
+            err = "El resumen no puede estar vacio."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "func":
+        if key == "texto" and not val_raw:
+            err = "El texto no puede estar vacio."
+        elif key == "prioridad":
+            try:
+                pr = max(1, min(5, int(val_raw)))
+            except ValueError:
+                err = "Prioridad invalida (1-5)."
+            else:
+                ent1 = replace(ent0, prioridad=pr)
+        elif key == "estado":
+            est = val_raw.lower().strip()
+            if est not in ESTADOS_VALIDOS:
+                err = f"Estado invalido: {', '.join(sorted(ESTADOS_VALIDOS))}"
+            else:
+                ent1 = replace(ent0, estado=est)
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "inv":
+        if key == "concepto" and not val_raw:
+            err = "El concepto no puede estar vacio."
+        elif key == "estado":
+            est = val_raw.lower().strip()
+            if est not in ESTADOS_INVESTIGACION:
+                err = f"Estado invalido: {', '.join(sorted(ESTADOS_INVESTIGACION))}"
+            else:
+                ent1 = replace(ent0, estado=est)
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "enlace":
+        if key == "url" and not val_raw:
+            err = "La URL no puede estar vacia."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "pendiente":
+        if key == "texto" and not val_raw:
+            err = "El texto no puede estar vacio."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+
+    if err:
+        await update.message.reply_text(err)
+        return True
+
+    if not _guardar_entidad_mod_lista(kind, ent1):
+        await update.message.reply_text("No se pudo guardar.")
+        context.chat_data.pop(WIZARD_MOD_LISTA_KEY, None)
+        return True
+
+    wizard["fase"] = "menu"
+    wizard.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_lista(kind, eid)
+    )
+    return True
+
+
+async def cmd_cancelarmodlista(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_LISTA_KEY, None)
+    await update.message.reply_text("Edicion cancelada.")
+
+
+async def cmd_modconvo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "convo", "modconvo")
+
+
+async def cmd_modidea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "idea", "modidea")
+
+
+async def cmd_modmemoria(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "memoria", "modmemoria")
+
+
+async def cmd_modfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "func", "modfunc")
+
+
+async def cmd_modinv(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "inv", "modinv")
+
+
+async def cmd_modenlace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "enlace", "modenlace")
+
+
+async def cmd_modpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "pendiente", "modpendiente")
 
 
 async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4580,7 +5009,7 @@ async def _manejar_wizard_mod_factura(
         wizard["campo_key"] = key
         await update.message.reply_text(
             f"Nuevo valor para: {label}\n"
-            f"(una linea; envia '-' para dejar vacio)\n/cancelarmodfactura para abortar."
+            f"(una linea; '-' vacio; . o = mantener)\n/cancelarmodfactura para abortar."
         )
         return True
 
@@ -4589,6 +5018,15 @@ async def _manejar_wizard_mod_factura(
         wizard["fase"] = "menu"
         await update.message.reply_text(_texto_menu_mod_factura(fid))
         return True
+
+    if _es_mantener_wizard_valor(text):
+        wizard["fase"] = "menu"
+        wizard.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios en ese campo.\n\n" + _texto_menu_mod_factura(fid)
+        )
+        return True
+
     val = "" if text == "-" else text
     if not actualizar_factura_campos(fid, {key: val}):
         await update.message.reply_text("No se pudo guardar (id invalido?).")
@@ -4872,6 +5310,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _rechazar_no_autorizado(update)
         return
     if await _manejar_wizard_mod_factura(update, context):
+        return
+    if await _manejar_wizard_mod_lista(update, context):
         return
     if await _manejar_wizard_mod_fabrica(update, context):
         return
@@ -5262,6 +5702,14 @@ def main() -> None:
     app.add_handler(CommandHandler("rmproyecto", cmd_rmproyecto))
     app.add_handler(CommandHandler("modproyecto", cmd_modproyecto))
     app.add_handler(CommandHandler("cancelarmodproyecto", cmd_cancelarmodproyecto))
+    app.add_handler(CommandHandler("modconvo", cmd_modconvo))
+    app.add_handler(CommandHandler("modidea", cmd_modidea))
+    app.add_handler(CommandHandler("modmemoria", cmd_modmemoria))
+    app.add_handler(CommandHandler("modfunc", cmd_modfunc))
+    app.add_handler(CommandHandler("modinv", cmd_modinv))
+    app.add_handler(CommandHandler("modenlace", cmd_modenlace))
+    app.add_handler(CommandHandler("modpendiente", cmd_modpendiente))
+    app.add_handler(CommandHandler("cancelarmodlista", cmd_cancelarmodlista))
     app.add_handler(CommandHandler("tiempo", cmd_tiempo))
     app.add_handler(CommandHandler("tiempofin", cmd_tiempofin))
     app.add_handler(CommandHandler("listtiempo", cmd_listtiempo))
@@ -5290,6 +5738,7 @@ def main() -> None:
     app.add_handler(CommandHandler("evento", cmd_evento))
     app.add_handler(CommandHandler("listeventos", cmd_listeventos))
     app.add_handler(CommandHandler("informame", cmd_informame))
+    app.add_handler(CommandHandler("info", cmd_info))
     app.add_handler(CommandHandler("verevento", cmd_verevento))
     app.add_handler(CommandHandler("rmevento", cmd_rmevento))
     app.add_handler(CommandHandler("listtareas", cmd_listtareas))

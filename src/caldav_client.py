@@ -168,6 +168,45 @@ def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
     return []
 
 
+def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> list:
+    """
+    Calendarios visibles para agenda: equipo (CALDAV_AGENDA_CALENDAR_NAMES o CALDAV_CALENDAR_NAMES)
+    más, si aplica, el calendario personal mapeado para ese usuario de Telegram.
+    """
+    try:
+        principal = client.principal()
+        all_cals = list(principal.calendars())
+    except Exception:
+        return _resolve_target_calendars(client)
+
+    team_names = list(config.CALDAV_AGENDA_CALENDAR_NAMES or [])
+    if not team_names:
+        team_names = list(config.CALDAV_CALENDAR_NAMES or [])
+    if not team_names and (config.CALDAV_CALENDAR_NAME or "").strip():
+        team_names = [(config.CALDAV_CALENDAR_NAME or "").strip()]
+
+    out: list = []
+    seen_urls: set[str] = set()
+    if team_names:
+        out = _calendarios_filtrados_por_nombres(all_cals, team_names)
+        seen_urls = {str(getattr(c, "url", "") or "").strip() for c in out if getattr(c, "url", None)}
+
+    un = (telegram_username or "").strip().lstrip("@").lower()
+    if un and config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM:
+        personal_name = (config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM.get(un) or "").strip()
+        if personal_name:
+            extra = _calendarios_filtrados_por_nombres(all_cals, [personal_name])
+            for c in extra:
+                u = str(getattr(c, "url", "") or "").strip()
+                if u and u not in seen_urls:
+                    seen_urls.add(u)
+                    out.append(c)
+
+    if out:
+        return out
+    return _resolve_target_calendars(client)
+
+
 def _resolve_target_calendars(client) -> list:
     """
     Calendarios objetivo: CALDAV_CALENDAR_URL, o filtro por CALDAV_CALENDAR_NAME en el path,
@@ -508,9 +547,15 @@ def crear_tarea(
     return False
 
 
-def listar_tareas(include_completed: bool = False) -> list[dict]:
+def listar_tareas(
+    include_completed: bool = False,
+    *,
+    agenda_telegram_username: str | None = None,
+    solo_calendarios_escritura: bool = False,
+) -> list[dict]:
     """
-    Recupera tareas (VTODO) de todos los calendarios objetivo CalDAV.
+    Recupera tareas (VTODO) de calendarios de agenda (equipo + personal según usuario) o,
+    si solo_calendarios_escritura, solo de los calendarios donde se escribe por defecto.
     Retorna lista de dicts con: summary, description, due, priority, status, uid, href, calendario.
     """
     if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
@@ -523,7 +568,10 @@ def listar_tareas(include_completed: bool = False) -> list[dict]:
             username=config.CALDAV_USER,
             password=config.CALDAV_PASS,
         )
-        calendars = _resolve_target_calendars(client)
+        if solo_calendarios_escritura:
+            calendars = _resolve_target_calendars(client)
+        else:
+            calendars = _resolve_agenda_calendars(client, agenda_telegram_username)
     except Exception:
         return []
 
@@ -614,10 +662,18 @@ def _vevent_summary_uid(comp) -> tuple[str, str]:
     return summ, uid
 
 
-def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> list[dict]:
+def listar_eventos_en_ventana(
+    win_start: datetime,
+    win_end_excl: datetime,
+    *,
+    agenda_telegram_username: str | None = None,
+    solo_calendarios_escritura: bool = False,
+) -> list[dict]:
     """
     VEVENT con inicio en [win_start, win_end_excl). Misma forma de dict que listar_eventos_proximos_dias.
     win_start / win_end_excl: datetime naive (fecha-hora local del entorno).
+    Por defecto usa calendarios de agenda (equipo + personal del usuario de Telegram si aplica).
+    solo_calendarios_escritura: solo colecciones donde se crean eventos (p. ej. deduplicar sync).
     """
     _set_last_evento_error("")
     if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
@@ -633,7 +689,10 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
             username=config.CALDAV_USER,
             password=config.CALDAV_PASS,
         )
-        calendars = _resolve_target_calendars(client)
+        if solo_calendarios_escritura:
+            calendars = _resolve_target_calendars(client)
+        else:
+            calendars = _resolve_agenda_calendars(client, agenda_telegram_username)
     except Exception as exc:
         _set_last_evento_error(f"Error conectando CalDAV: {str(exc)[:180]}")
         return []
@@ -692,6 +751,8 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
                 else:
                     start_iso = st.strftime("%Y-%m-%d")
 
+                desc_ev = str(comp.get("description") or "")
+
                 resultado.append(
                     {
                         "summary": summ or "(sin titulo)",
@@ -700,6 +761,7 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
                         "uid": uid,
                         "url": url,
                         "calendario": cal_label,
+                        "description": desc_ev,
                     }
                 )
 
@@ -707,7 +769,41 @@ def listar_eventos_en_ventana(win_start: datetime, win_end_excl: datetime) -> li
     return resultado
 
 
-def listar_eventos_proximos_dias(dias: int) -> list[dict]:
+def evento_convocatoria_ya_en_calendario_escritura(
+    fecha_plazo_yyyy_mm_dd: str, url: str, titulo: str = ""
+) -> bool:
+    """
+    True si en los calendarios de escritura ya hay un evento ese día con la URL en la descripción
+    (como genera crear_evento) o con el mismo título normalizado (espacios).
+    """
+    raw = (fecha_plazo_yyyy_mm_dd or "").strip()[:10]
+    if len(raw) != 10:
+        return False
+    try:
+        d_only = datetime.strptime(raw, "%Y-%m-%d").date()
+    except ValueError:
+        return False
+    win_start = datetime.combine(d_only, time.min)
+    win_end_excl = win_start + timedelta(days=1)
+    needle_url = (url or "").strip()
+    tit_cmp = " ".join((titulo or "").strip().lower().split())
+    eventos = listar_eventos_en_ventana(
+        win_start, win_end_excl, solo_calendarios_escritura=True
+    )
+    for ev in eventos:
+        if needle_url and needle_url in (ev.get("description") or ""):
+            return True
+        s = " ".join((ev.get("summary") or "").strip().lower().split())
+        if tit_cmp and s == tit_cmp:
+            return True
+    return False
+
+
+def listar_eventos_proximos_dias(
+    dias: int,
+    *,
+    agenda_telegram_username: str | None = None,
+) -> list[dict]:
     """
     Eventos VEVENT con inicio en la ventana [hoy 00:00 local, hoy + dias) (dias = 7 -> 7 días desde hoy).
     Consulta todos los calendarios objetivo que declaran VEVENT (orden _sort_calendars_for_events).
@@ -720,7 +816,9 @@ def listar_eventos_proximos_dias(dias: int) -> list[dict]:
     today_d = fecha_hoy_relativas()
     win_start = datetime.combine(today_d, time.min)
     win_end_excl = win_start + timedelta(days=int(dias))
-    return listar_eventos_en_ventana(win_start, win_end_excl)
+    return listar_eventos_en_ventana(
+        win_start, win_end_excl, agenda_telegram_username=agenda_telegram_username
+    )
 
 
 def _vevent_dtend_or_duration(comp) -> str:
@@ -744,6 +842,8 @@ def formatear_detalle_evento_por_url(resource_url: str) -> str:
     """
     Lee el .ics del evento por URL y devuelve texto con todos los campos principales del VEVENT.
     """
+    from src.fecha_display import formatear_dia_mes_sin_anio
+
     _set_last_evento_error("")
     u = (resource_url or "").strip()
     if not u:
@@ -776,13 +876,18 @@ def formatear_detalle_evento_por_url(resource_url: str) -> str:
             continue
         summ, _ = _vevent_summary_uid(comp)
         st = _vevent_start_for_sort(comp)
-        start_s = ""
+        start_raw = ""
         if st:
             if hasattr(st, "hour") and (st.hour, st.minute) != (0, 0):
-                start_s = st.strftime("%Y-%m-%d %H:%M")
+                start_raw = st.strftime("%Y-%m-%d %H:%M")
             else:
-                start_s = st.strftime("%Y-%m-%d")
-        end_s = _vevent_dtend_or_duration(comp)
+                start_raw = st.strftime("%Y-%m-%d")
+        start_s = formatear_dia_mes_sin_anio(start_raw) if start_raw else ""
+        end_raw = _vevent_dtend_or_duration(comp)
+        if (end_raw or "").lower().startswith("duracion"):
+            end_s = end_raw
+        else:
+            end_s = formatear_dia_mes_sin_anio(end_raw) if end_raw else ""
         desc = str(comp.get("description") or "").strip()
         loc = str(comp.get("location") or "").strip()
         partes = [

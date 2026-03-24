@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import config
 from src.caldav_client import listar_eventos_en_ventana, listar_tareas
 from src.deck_client import listar_tareas_deck
+from src.fecha_display import formatear_dia_mes_sin_anio
 from src.notifier import enviar_mensaje_a_chats
 
 CHUNK = 4000
@@ -55,14 +56,14 @@ def main() -> int:
     win_start = datetime.combine(lunes, time.min)
     win_end_excl = win_start + timedelta(days=7)
 
-    eventos = listar_eventos_en_ventana(win_start, win_end_excl)
+    eventos = listar_eventos_en_ventana(win_start, win_end_excl, agenda_telegram_username=None)
     deck_all = listar_tareas_deck()
     deck = [
         t
         for t in deck_all
         if (t.get("due") or "") and iso_lun <= t["due"] <= iso_dom
     ]
-    vtodos_all = listar_tareas(include_completed=False)
+    vtodos_all = listar_tareas(include_completed=False, agenda_telegram_username=None)
     vtodos = [
         t
         for t in vtodos_all
@@ -71,14 +72,17 @@ def main() -> int:
 
     if not eventos and not deck and not vtodos:
         print(
-            f"Nada en la semana {iso_lun}–{iso_dom} ({tz.key}). No se envía Telegram."
+            f"Nada en la semana {formatear_dia_mes_sin_anio(iso_lun)} a "
+            f"{formatear_dia_mes_sin_anio(iso_dom)} ({tz.key}). No se envía Telegram."
         )
         return 0
 
+    rango = f"{formatear_dia_mes_sin_anio(iso_lun)} a {formatear_dia_mes_sin_anio(iso_dom)}"
     lineas = [
-        f"Agenda de la semana ({iso_lun} a {iso_dom}, {tz.key}).\n",
-        "Calendarios MolinoLab / personales según CALDAV_CALENDAR_NAME (varios separados por coma).\n",
-        "Próximos 7 días en el bot: /informame\n\n",
+        f"Agenda de la semana ({rango}, {tz.key}).\n",
+        "Calendarios de equipo: CALDAV_AGENDA_CALENDAR_NAMES (o CALDAV_CALENDAR_NAME). "
+        "Personales solo en el bot si aplica tu usuario.\n",
+        "Próximos días en el bot: /informame o /info [n]\n\n",
     ]
 
     if eventos:
@@ -86,7 +90,8 @@ def main() -> int:
         for ev in eventos:
             cal = ev.get("calendario")
             suf = f" ({cal})" if cal else ""
-            lineas.append(f"  • [{ev['start_iso']}]{suf} {ev['summary']}")
+            fh = formatear_dia_mes_sin_anio(ev["start_iso"])
+            lineas.append(f"  • [{fh}]{suf} {ev['summary']}")
         lineas.append("")
 
     if deck:
@@ -95,7 +100,8 @@ def main() -> int:
             deck, key=lambda x: (x.get("due") or "", x.get("stack_title") or "", x.get("title") or "")
         ):
             col = f" ({t.get('stack_title')})" if t.get("stack_title") else ""
-            lineas.append(f"  • [{t.get('due')}]{col} {t.get('title') or '(sin titulo)'}")
+            due_show = formatear_dia_mes_sin_anio(t.get("due") or "")
+            lineas.append(f"  • [{due_show}]{col} {t.get('title') or '(sin titulo)'}")
         lineas.append("")
 
     if vtodos:
@@ -103,7 +109,8 @@ def main() -> int:
         for t in sorted(vtodos, key=lambda x: (x.get("due") or "", x.get("summary") or "")):
             cal = t.get("calendario")
             suf = f" ({cal})" if cal else ""
-            lineas.append(f"  • [{t.get('due')}]{suf} {t.get('summary') or '(sin titulo)'}")
+            due_v = formatear_dia_mes_sin_anio(t.get("due") or "")
+            lineas.append(f"  • [{due_v}]{suf} {t.get('summary') or '(sin titulo)'}")
         lineas.append("")
 
     texto = "\n".join(lineas).strip()

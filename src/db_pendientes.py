@@ -99,6 +99,16 @@ def buscar_por_id(id_buscar: str) -> Pendiente | None:
     return None
 
 
+def actualizar_pendiente(p: Pendiente) -> bool:
+    items = listar()
+    for i, x in enumerate(items):
+        if x.id == p.id:
+            items[i] = p
+            escribir_todo(items)
+            return True
+    return False
+
+
 def añadir(texto: str, *, user_id: int, username: str, fuente: str) -> Pendiente:
     limpio = (texto or "").strip()
     pid = hashlib.sha256(

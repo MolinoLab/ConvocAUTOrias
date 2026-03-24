@@ -43,6 +43,31 @@ CALDAV_CALENDAR_URL = (
     _caldav_calendar_url_raw.rstrip("/") + "/" if _caldav_calendar_url_raw else ""
 )
 
+# Calendarios para lectura de agenda (/informame, recordatorios): nombres/slugs separados por coma.
+# Vacío = se usan los mismos que CALDAV_CALENDAR_NAME(S) (p. ej. MolinoLab + molinolab compartidos).
+_caldav_agenda_names_raw = os.getenv("CALDAV_AGENDA_CALENDAR_NAMES", "").strip()
+CALDAV_AGENDA_CALENDAR_NAMES = (
+    [p.strip() for p in _caldav_agenda_names_raw.split(",") if p.strip()]
+    if _caldav_agenda_names_raw
+    else []
+)
+
+# JSON: usuario de Telegram (sin @, minusculas) -> nombre/slug del calendario personal en CalDAV.
+# Solo se mezclan eventos de ese calendario cuando el usuario coincide (p. ej. b1tdreamer -> personal).
+_personal_cal_raw = os.getenv("CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM", "").strip()
+CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM: dict[str, str] = {}
+if _personal_cal_raw:
+    try:
+        _pc_obj = json.loads(_personal_cal_raw)
+        if isinstance(_pc_obj, dict):
+            CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM = {
+                str(k).strip().lstrip("@").lower(): str(v).strip()
+                for k, v in _pc_obj.items()
+                if str(k).strip() and str(v).strip()
+            }
+    except json.JSONDecodeError:
+        pass
+
 # Ollama (IA local)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
