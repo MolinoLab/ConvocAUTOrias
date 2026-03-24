@@ -613,7 +613,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     texto = (
-        f"ConvocAUTOrias bot v{config.APP_VERSION}\n\n"
+        f"armonIA bot v{config.APP_VERSION}\n\n"
         "Comandos por tema (orden sugerido: crear → listar → ver → borrar):\n\n"
         "[Convocatorias]\n"
         "/convo <url> — Añade convocatoria por URL\n"
@@ -714,18 +714,6 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Por voz, tarea/compra/evento: usa 'para el' o 'para' antes de la fecha "
         "(ej. tarea comprar pan para mañana, para el 25-03 o para el miércoles). "
         "Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
-        "Fechas (tarea/evento texto): DD-MM-AAAA; DD-MM = año actual; solo DD = mes actual; "
-        "tambien YYYY-MM-DD; palabras: antier, ayer, hoy, mañana, pasado (pasado mañana); "
-        "y en español: 12 de febrero de 2026, 12 del 2 del 2026, 3 de marzo.\n"
-        "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
-        "en listados se muestran como DD, MM (sin año) u DD, MM HH:MM.\n\n"
-        "[Atajos de comandos]\n"
-        "/ls… equivale a /list… (ej. /lsconvo, /lscv, /lsfn). /v… a /ver… (ej. /vconvo, /vcv).\n"
-        "Convocatorias: /lscv, /vcv. Ideas: /lsid, /vid. Memorias: /lsmm, /vmm.\n"
-        "Proyectos: /lsproy, /lspy, /vproy, /vpy; alta /proy, /py; /modproy, /modpy.\n"
-        "Tiempos: /lstm, /vtm. Investigaciones: /lsinv, /vinv. Funciones: /lsfn, /lsfunc, /vfn, /vfunc.\n"
-        "Fabrica: /lsfab, /vfab. Eventos: /lsev, /vev. Tareas: /lst, /vt.\n"
-        "Pendientes: /lspen. Facturas: /fct, /vfct; listado contable: /lsfct.\n\n"
         "/ayuda — Esta lista"
     )
     await _reply_texto_largo(update, texto)
@@ -4112,7 +4100,7 @@ async def cmd_rmfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if not context.args:
         await update.message.reply_text(
-            "Uso: /rmfunc <numero> [numero ...]\n"
+            "Uso: /rmfunc o /rmfn <numero> [numero ...]\n"
             "Los numeros son los de /listfunc en este chat."
         )
         return
@@ -5759,21 +5747,27 @@ def main() -> None:
     app.add_handler(CommandHandler("verfactura", cmd_verfactura))
     app.add_handler(CommandHandler("rmfactura", cmd_rmfactura))
     app.add_handler(CommandHandler("modfactura", cmd_modfactura))
-    # Alias: /ls* = /list*, /v* = /ver*, y abreviaturas por tema
+    # Alias: /ls* = /list*, /v* = /ver*, /rm* abreviado = mismo handler que /rm… largo
     for _alias, _cmd in (
         ("lsconvo", cmd_listar),
         ("lscv", cmd_listar),
         ("vconvo", cmd_verconvo),
         ("vcv", cmd_verconvo),
+        ("rmcv", cmd_rmconvo),
         ("lsurl", cmd_listurl),
         ("vurl", cmd_verurl),
+        ("rmu", cmd_rmurl),
         ("lsideas", cmd_listideas),
         ("lsid", cmd_listideas),
         ("videa", cmd_veridea),
         ("vid", cmd_veridea),
+        ("rmid", cmd_rmidea),
+        ("rmideas", cmd_rmidea),
         ("lsmemorias", cmd_listmemorias),
         ("lsmm", cmd_listmemorias),
         ("vmm", cmd_vermemoria),
+        ("rmm", cmd_rmmemoria),
+        ("rmmemorias", cmd_rmmemoria),
         ("proy", cmd_proyecto),
         ("py", cmd_proyecto),
         ("lsproyectos", cmd_listproyectos),
@@ -5782,6 +5776,9 @@ def main() -> None:
         ("vproyecto", cmd_verproyecto),
         ("vproy", cmd_verproyecto),
         ("vpy", cmd_verproyecto),
+        ("rmproy", cmd_rmproyecto),
+        ("rmpy", cmd_rmproyecto),
+        ("rmproyectos", cmd_rmproyecto),
         ("modproy", cmd_modproyecto),
         ("modpy", cmd_modproyecto),
         ("lstm", cmd_listtiempo),
@@ -5790,26 +5787,39 @@ def main() -> None:
         ("lsinv", cmd_listinvestigaciones),
         ("vinvestigacion", cmd_verinvestigacion),
         ("vinv", cmd_verinvestigacion),
+        ("rminv", cmd_rminvestigacion),
+        ("rminvestigaciones", cmd_rminvestigacion),
         ("lsfunc", cmd_listfunc),
         ("lsfn", cmd_listfunc),
         ("vfunc", cmd_verfunc),
         ("vfn", cmd_verfunc),
+        ("rmfn", cmd_rmfunc),
+        ("rmfuncionalidades", cmd_rmfunc),
         ("lsfab", cmd_listfab),
         ("vfab", cmd_verfab),
+        ("rmfb", cmd_rmfab),
         ("lseventos", cmd_listeventos),
         ("lsev", cmd_listeventos),
         ("vevento", cmd_verevento),
         ("vev", cmd_verevento),
+        ("rmev", cmd_rmevento),
+        ("rmeventos", cmd_rmevento),
         ("lstareas", cmd_listtareas),
         ("lst", cmd_listtareas),
         ("vtarea", cmd_vertarea),
         ("vt", cmd_vertarea),
+        ("rmt", cmd_rmtarea),
+        ("rmtareas", cmd_rmtarea),
         ("lspendientes", cmd_listpendientes),
         ("lspen", cmd_listpendientes),
         ("vpendiente", cmd_verpendiente),
         ("vpen", cmd_verpendiente),
+        ("rmpen", cmd_rmpendientes),
+        ("rmspendientes", cmd_rmpendientes),
         ("fct", cmd_factura),
         ("vfct", cmd_verfactura),
+        ("rmfct", cmd_rmfactura),
+        ("rmcontabilidad", cmd_rmfactura),
         ("lscontabilidad", cmd_listcontabilidad),
         ("lsfct", cmd_listcontabilidad),
     ):

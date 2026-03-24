@@ -12,8 +12,8 @@ from dotenv import load_dotenv
 DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
-# Versión del bot (mostrar en /ayuda; incrementar manualmente en cada release)
-APP_VERSION = os.getenv("APP_VERSION", "0.23").strip() or "0.23"
+# Versión del bot (armonIA en /ayuda y arranque). Subir el número en cada cambio que despliegues.
+APP_VERSION = os.getenv("APP_VERSION", "0.26").strip() or "0.26"
 # Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
 

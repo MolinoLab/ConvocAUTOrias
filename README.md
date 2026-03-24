@@ -27,6 +27,23 @@ pip install -r requirements.txt
    Comandos principales: `/convo <url>`, `/url <url>`, `/listconvo`, `/listurl`, `/idea <texto>`, `/func <texto> [prioridad]`, `/ayuda`.
    Una URL suelta (sin comando) se guarda en `data/enlaces.csv`. Convocatorias solo con `/convo`. Si envías un audio, el bot lo transcribe y lo guarda como idea.
 
+   **Atajos de comandos (Telegram)** — mismos handlers que los comandos largos; la lista detallada está aquí para no alargar `/ayuda`:
+
+   - `/ls…` equivale a `/list…` (ej. `/lsconvo`, `/lscv`, `/lsfn`). `/v…` a `/ver…` (ej. `/vconvo`, `/vcv`).
+   - Convocatorias: `/lscv`, `/vcv`; borrar: `/rmcv` → `/rmconvo`.
+   - Enlaces: `/lsurl`, `/vurl`; borrar: `/rmu` → `/rmurl`.
+   - Ideas: `/lsid`, `/vid`; borrar: `/rmid`, `/rmideas` → `/rmidea`.
+   - Memorias: `/lsmm`, `/vmm`; borrar: `/rmm`, `/rmmemorias` → `/rmmemoria`.
+   - Proyectos: `/lsproy`, `/lspy`, `/vproy`, `/vpy`; alta `/proy`, `/py`; `/modproy`, `/modpy`; borrar: `/rmproy`, `/rmpy`, `/rmproyectos` → `/rmproyecto`.
+   - Tiempos: `/lstm`, `/vtm` (sin comando `rm` equivalente).
+   - Investigaciones: `/lsinv`, `/vinv`; borrar: `/rminv`, `/rminvestigaciones` → `/rminvestigacion`.
+   - Funcionalidades: `/lsfn`, `/lsfunc`, `/vfn`, `/vfunc`; borrar: `/rmfn`, `/rmfuncionalidades` → `/rmfunc`.
+   - Fabricación: `/lsfab`, `/vfab`; borrar: `/rmfb` → `/rmfab`.
+   - Eventos: `/lsev`, `/vev`; borrar: `/rmev`, `/rmeventos` → `/rmevento`.
+   - Tareas: `/lst`, `/vt`; borrar: `/rmt`, `/rmtareas` → `/rmtarea`.
+   - Pendientes: `/lspen`, `/vpen`; borrar: `/rmpen`, `/rmspendientes` → `/rmpendientes`.
+   - Facturas: `/fct`, `/vfct`; listado contable: `/lsfct`; borrar: `/rmfct`, `/rmcontabilidad` → `/rmfactura`.
+
 3. **Revisar plazos y notificaciones**:
    ```bash
    python scripts/revisar_convocatorias.py
