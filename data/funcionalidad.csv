@@ -23,3 +23,4 @@ a42b22ea12e89115,"El flujo de trabajo que revisa las fechas de las convocatorias
 5680788962cbb13c,quiero poder modificar cualquier elemento de cualquier categoría con /mod<categoria> <numero> y un wizzard me llevará por los campos para sobreescribir los campos prioridad,5,pendiente,2026-03-24T13:07:23.512050,telegram
 b09ff4f4b376dd01,"quiero un aliar para /informame que sea /info <numero> para traer la información de los próximos <numero> días por defecto 7. Habrá que resolver permisos de los calendarios, quiero que me traiga información tb del personal dependiendo del usuario. prioridad",5,pendiente,2026-03-24T13:13:11.723814,telegram
 b97d5d8fd3ee0a5a,parece ser que el problema de los calendarios se debe a que no están en el mismo calendario de bot. prioridad,5,pendiente,2026-03-24T13:14:13.338282,telegram
+21f9426bf635c59f,"cambiar la visualización de las fechas a 30 de abril en lugar de 30, 03,",4,pendiente,2026-03-24T16:01:30.420227,telegram

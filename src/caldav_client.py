@@ -101,6 +101,30 @@ def _matches_calendar_live_display_name(cal, name: str) -> bool:
     return _norm_calendar_token(str(dn)) == _norm_calendar_token(name)
 
 
+def _matches_calendar_shared_alias(url: str, cal, name: str) -> bool:
+    """
+    Acepta calendarios compartidos de Nextcloud:
+    - slug: <nombre>_shared_by_<owner>
+    - display: "<Nombre> (<owner>)"
+    """
+    nm = _norm_calendar_token((name or "").strip())
+    if not nm:
+        return False
+
+    slug = _norm_calendar_token(_calendar_slug_from_dav_url(url) or "")
+    if slug and (slug == nm or slug.startswith(f"{nm}sharedby")):
+        return True
+
+    try:
+        dn = str(cal.get_display_name() or "").strip()
+    except Exception:
+        dn = ""
+    dn_base = dn.split("(", 1)[0].strip() if dn else ""
+    if dn_base and _norm_calendar_token(dn_base) == nm:
+        return True
+    return False
+
+
 def _etiqueta_calendario(cal) -> str:
     try:
         dn = cal.get_display_name()
@@ -126,7 +150,11 @@ def _calendarios_filtrados_por_nombres(calendars, nombres: list[str]) -> list:
             nm = (name or "").strip()
             if not nm:
                 continue
-            if _matches_calendar_display_name(url, nm) or _matches_calendar_live_display_name(c, nm):
+            if (
+                _matches_calendar_display_name(url, nm)
+                or _matches_calendar_live_display_name(c, nm)
+                or _matches_calendar_shared_alias(url, c, nm)
+            ):
                 seen.add(url)
                 out.append(c)
                 break
@@ -706,7 +734,8 @@ def listar_eventos_en_ventana(
     resultado: list[dict] = []
 
     for calendar in ordered:
-        if _calendar_supports_vevent(calendar) is False:
+        supports_vevent = _calendar_supports_vevent(calendar)
+        if supports_vevent is False:
             continue
         cal_label = _etiqueta_calendario(calendar)
         try:
