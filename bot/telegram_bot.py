@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+from dataclasses import replace
 import shutil
 import sys
 import tempfile
@@ -101,6 +102,7 @@ from src.db_pendientes import (
 from src.db_proyectos import (
     ESTADOS_PROYECTO_VALIDOS,
     Proyecto,
+    actualizar_proyecto,
     añadir_proyecto,
     buscar_por_id as buscar_proyecto_por_id,
     eliminar_por_id as eliminar_proyecto_por_id,
@@ -183,6 +185,7 @@ CACHE_RM_FABRICA = "rm_fabrica_ids"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
 WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
 WIZARD_MOD_FABRICA_KEY = "mod_fabrica_wizard"
+WIZARD_MOD_PROYECTO_KEY = "mod_proyecto_wizard"
 ESPERANDO_FACTURA_KEY = "esperando_factura"
 
 CAMPOS_MOD_FABRICA: list[tuple[str, str]] = [
@@ -193,6 +196,16 @@ CAMPOS_MOD_FABRICA: list[tuple[str, str]] = [
     ("notas", "Notas / descripcion"),
 ]
 
+CAMPOS_MOD_PROYECTO: list[tuple[str, str]] = [
+    ("titulo", "Titulo"),
+    ("persona_contacto", "Persona de contacto"),
+    ("email_contacto", "Email de contacto"),
+    ("presupuesto", "Presupuesto (- vaciar)"),
+    ("fecha_fin", "Fecha entrega / fin (DD,MM,YYYY flexible; - sin fecha)"),
+    ("estado", "Estado (idea|activo|en_espera|presupuestado|completado|cancelado)"),
+    ("tags", "Tags (coma separadas; - vaciar)"),
+]
+
 FAB_RESUMEN_LISTA_MAX = 72
 
 _PAT_MEDIDAS_FABRICA = re.compile(
@@ -200,8 +213,6 @@ _PAT_MEDIDAS_FABRICA = re.compile(
     re.IGNORECASE,
 )
 
-# Resumen de texto en /listfunc y /listfuncionalidades (60 + 20 caracteres)
-FUNC_RESUMEN_MAX = 80
 INV_RESUMEN_LISTA_MAX = 72
 PENDIENTE_RESUMEN_LISTA_MAX = 72
 _TIPOS_MV_VALIDOS = frozenset(
@@ -519,10 +530,12 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/vermemoria <numero>\n"
         "/rmmemoria <num ...>\n\n"
         "[Proyectos]\n"
-        "/proyecto — Alta guiada (titulo, fechas, contacto, estado, descripcion en .md)\n"
+        "/proyecto — Alta guiada (titulo, contacto, presupuesto, fecha entrega, estado, tags, .md). "
+        "Fecha de creacion automatica (hoy segun APP_TIMEZONE).\n"
         "/cancelarproyecto — Abortar la alta guiada\n"
         "/listproyectos — Listar\n"
         "/verproyecto <numero>\n"
+        "/modproyecto <numero> — Edicion guiada por campo; /cancelarmodproyecto para salir\n"
         "/rmproyecto <num ...>\n\n"
         "[Tiempos por proyecto]\n"
         "/tiempo <num_proyecto> — Iniciar (un solo activo global)\n"
@@ -555,7 +568,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/modfab <numero> — Edicion guiada; /cancelarmodfab para salir\n"
         "/rmfab <num ...>\n\n"
         "[Eventos CalDAV]\n"
-        "/evento <nombre> <fecha> [HH:MM] — Crear (1 h si hay hora)\n"
+        "/evento <nombre> <fecha> [hora] [duracion] — Crear; hora HH:MM o coloquial (a las 5 y media de la tarde); "
+        "duracion: durante N horas/dias/minutos (con hora; si no, 1 h)\n"
         "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
         "/informame — Eventos y tareas (Deck + VTODO) en los proximos 7 dias\n"
         "/verevento <numero>\n"
@@ -590,6 +604,13 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "y en español: 12 de febrero de 2026, 12 del 2 del 2026, 3 de marzo.\n"
         "Fechas (proyecto/tiempo): entrada flexible (coma, guion, barra, punto); "
         "se muestran como DD,MM,YYYY y DD,MM,YYYY HH:MM.\n\n"
+        "[Atajos de comandos]\n"
+        "/ls… equivale a /list… (ej. /lsconvo, /lscv, /lsfn). /v… a /ver… (ej. /vconvo, /vcv).\n"
+        "Convocatorias: /lscv, /vcv. Ideas: /lsid, /vid. Memorias: /lsmm, /vmm.\n"
+        "Proyectos: /lsproy, /lspy, /vproy, /vpy; alta /proy, /py; /modproy, /modpy.\n"
+        "Tiempos: /lstm, /vtm. Investigaciones: /lsinv, /vinv. Funciones: /lsfn, /lsfunc, /vfn, /vfunc.\n"
+        "Fabrica: /lsfab, /vfab. Eventos: /lsev, /vev. Tareas: /lst, /vt.\n"
+        "Pendientes: /lspen. Facturas: /fct, /vfct; listado contable: /lsfct.\n\n"
         "/ayuda — Esta lista"
     )
     await _reply_texto_largo(update, texto)
@@ -1205,24 +1226,21 @@ def _wizard_proyecto_prompt_paso(step: int) -> str:
     if step == 0:
         return "Nuevo proyecto — paso 1/8: Titulo del proyecto (una linea)."
     if step == 1:
-        return (
-            "Paso 2/8: Fecha de creacion (flexible: DD,MM,YYYY / DD-MM / solo DD…). "
-            "Escribe hoy para usar la fecha de hoy."
-        )
+        return "Paso 2/8: Persona de contacto."
     if step == 2:
-        return "Paso 3/8: Persona de contacto."
+        return "Paso 3/8: Email de contacto."
     if step == 3:
-        return "Paso 4/8: Email de contacto."
+        return "Paso 4/8: Presupuesto (texto o numero). Escribe - si no aplica."
     if step == 4:
-        return "Paso 5/8: Presupuesto (texto o numero). Escribe - si no aplica."
+        return (
+            "Paso 5/8: Fecha de entrega / fin prevista (DD,MM,YYYY flexible) o - si no hay."
+        )
     if step == 5:
         return (
-            "Paso 6/8: Fecha fin prevista (mismo formato flexible) o - si no hay."
+            "Paso 6/8: Estado: idea | activo | en_espera | presupuestado | completado | cancelado"
         )
     if step == 6:
-        return (
-            "Paso 7/8: Estado: idea | activo | en_espera | presupuestado | completado | cancelado"
-        )
+        return "Paso 7/8: Tags (separados por comas) o - si no hay."
     if step == 7:
         return (
             "Paso 8/8: Descripcion larga (markdown, una o varias lineas) o - si no hay."
@@ -1258,15 +1276,18 @@ def _formatear_proyecto_lista(p: Proyecto) -> str:
     if len(tit) > PROYECTO_RESUMEN_LISTA_MAX:
         tit = tit[:PROYECTO_RESUMEN_LISTA_MAX] + "..."
     tm = formatear_minutos_como_texto(tiempo_total_minutos(p))
-    return f"{tit} [{p.estado}] tiempo {tm}"
+    tg = (getattr(p, "tags", None) or "").strip()
+    suf_tags = f" | {tg}" if tg else ""
+    return f"{tit} [{p.estado}] tiempo {tm}{suf_tags}"
 
 
 def _formatear_proyecto_completo(p: Proyecto, cuerpo_md: str) -> str:
     fc = (p.fecha_creacion or "").strip()
     fc_show = formatear_fecha_ver(fc) if fc else "(sin fecha)"
     ff = (p.fecha_fin or "").strip()
-    ff_show = formatear_fecha_ver(ff) if ff else "(sin fecha fin)"
+    ff_show = formatear_fecha_ver(ff) if ff else "(sin fecha entrega)"
     pres = p.presupuesto.strip() or "(no indicado)"
+    tg = (getattr(p, "tags", None) or "").strip() or "(sin tags)"
     return (
         f"Titulo: {p.titulo}\n"
         f"Fecha creacion: {fc_show}\n"
@@ -1274,8 +1295,9 @@ def _formatear_proyecto_completo(p: Proyecto, cuerpo_md: str) -> str:
         f"Email: {p.email_contacto}\n"
         f"Presupuesto: {pres}\n"
         f"Tiempo total: {formatear_minutos_como_texto(tiempo_total_minutos(p))}\n"
-        f"Fecha fin: {ff_show}\n"
+        f"Fecha entrega: {ff_show}\n"
         f"Estado: {p.estado}\n"
+        f"Tags: {tg}\n"
         f"Fuente: {p.fuente}\n\n"
         f"Descripcion / notas:\n{cuerpo_md.strip() or '(vacio)'}"
     )
@@ -1340,56 +1362,42 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
         return True
 
     if step == 1:
-        tnorm = texto_raw.lower()
-        if tnorm in ("hoy", "today"):
-            dt = datetime.now()
-        else:
-            dt = parsear_solo_fecha(texto_raw)
-            if dt is None:
-                await update.message.reply_text(
-                    "Fecha no reconocida. Usa DD,MM,YYYY / DD-MM / solo DD… o la palabra hoy."
-                )
-                return True
-        data["fecha_creacion"] = formatear_fecha(dt)
+        data["persona_contacto"] = texto_raw
         wizard["step"] = 2
         await update.message.reply_text(_wizard_proyecto_prompt_paso(2))
         return True
 
     if step == 2:
-        data["persona_contacto"] = texto_raw
+        if not _email_valido_proyecto(texto_raw):
+            await update.message.reply_text("Email no valido. Vuelve a intentarlo.")
+            return True
+        data["email_contacto"] = texto_raw.strip()
         wizard["step"] = 3
         await update.message.reply_text(_wizard_proyecto_prompt_paso(3))
         return True
 
     if step == 3:
-        if not _email_valido_proyecto(texto_raw):
-            await update.message.reply_text("Email no valido. Vuelve a intentarlo.")
-            return True
-        data["email_contacto"] = texto_raw.strip()
+        data["presupuesto"] = "" if texto_raw in ("-", "—") else texto_raw
         wizard["step"] = 4
         await update.message.reply_text(_wizard_proyecto_prompt_paso(4))
         return True
 
     if step == 4:
-        data["presupuesto"] = "" if texto_raw in ("-", "—") else texto_raw
-        wizard["step"] = 5
-        await update.message.reply_text(_wizard_proyecto_prompt_paso(5))
-        return True
-
-    if step == 5:
         if texto_raw in ("-", "—"):
             data["fecha_fin"] = ""
         else:
             dt = parsear_solo_fecha(texto_raw)
             if dt is None:
-                await update.message.reply_text("Fecha fin no reconocida. Usa - si no hay.")
+                await update.message.reply_text(
+                    "Fecha de entrega no reconocida. Usa - si no hay."
+                )
                 return True
             data["fecha_fin"] = formatear_fecha(dt)
-        wizard["step"] = 6
-        await update.message.reply_text(_wizard_proyecto_prompt_paso(6))
+        wizard["step"] = 5
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(5))
         return True
 
-    if step == 6:
+    if step == 5:
         est = texto_raw.lower().strip()
         if est not in ESTADOS_PROYECTO_VALIDOS:
             await update.message.reply_text(
@@ -1398,6 +1406,12 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
             )
             return True
         data["estado"] = est
+        wizard["step"] = 6
+        await update.message.reply_text(_wizard_proyecto_prompt_paso(6))
+        return True
+
+    if step == 6:
+        data["tags"] = "" if texto_raw in ("-", "—") else texto_raw.strip()
         wizard["step"] = 7
         await update.message.reply_text(_wizard_proyecto_prompt_paso(7))
         return True
@@ -1416,6 +1430,9 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
             ruta_rel = str(ruta_abs)
         ruta_rel = ruta_rel.replace("\\", "/")
 
+        d0 = fecha_hoy_relativas()
+        fecha_creacion_auto = formatear_fecha(datetime(d0.year, d0.month, d0.day))
+
         plantilla = (
             f"# {data['titulo']}\n\n"
             f"**Contacto:** {data['persona_contacto']} <{data['email_contacto']}>\n\n"
@@ -1425,13 +1442,14 @@ async def _manejar_wizard_proyecto(update: Update, context: ContextTypes.DEFAULT
         p = Proyecto(
             id=pid,
             titulo=data["titulo"],
-            fecha_creacion=data["fecha_creacion"],
+            fecha_creacion=fecha_creacion_auto,
             persona_contacto=data["persona_contacto"],
             email_contacto=data["email_contacto"],
             presupuesto=data.get("presupuesto", ""),
             tiempo_total="0",
             fecha_fin=data.get("fecha_fin", ""),
             estado=data["estado"],
+            tags=data.get("tags", ""),
             ruta=ruta_rel,
             fuente="telegram",
         )
@@ -1850,6 +1868,31 @@ def _nueva_investigacion_pendiente(
 
 _PRIORIDAD_EMOJI = {1: "⬜", 2: "🟦", 3: "🟨", 4: "🟧", 5: "🟥"}
 
+_HORA_PALABRA_A_NUM: dict[str, int] = {
+    "una": 1,
+    "uno": 1,
+    "dos": 2,
+    "tres": 3,
+    "cuatro": 4,
+    "cinco": 5,
+    "seis": 6,
+    "siete": 7,
+    "ocho": 8,
+    "nueve": 9,
+    "diez": 10,
+    "once": 11,
+    "doce": 12,
+}
+
+
+def _limpiar_prioridad_residual_func(texto: str) -> str:
+    """Quita la palabra suelta 'prioridad' que queda al extraer el numero final en /func."""
+    t = " ".join((texto or "").split())
+    if not t:
+        return t
+    t = re.sub(r"\bprioridad\b", " ", t, flags=re.IGNORECASE)
+    return " ".join(t.split())
+
 
 def _prioridad_desde_token_grupo(token: str) -> int | None:
     t = (token or "").strip().lower()
@@ -1899,7 +1942,8 @@ def _parsear_funcionalidad_audio(contenido: str) -> tuple[str, int]:
             texto = texto[: m2.start()].strip()
             prioridad = int(m2.group(1))
 
-    return strip_sufijo_para_el(texto.strip()), prioridad
+    texto = _limpiar_prioridad_residual_func(texto.strip())
+    return strip_sufijo_para_el(texto), prioridad
 
 
 async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1934,7 +1978,7 @@ async def cmd_func(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if prioridad is None:
         prioridad = 3
 
-    texto = " ".join(args).strip()
+    texto = _limpiar_prioridad_residual_func(" ".join(args).strip())
     if not texto:
         await update.message.reply_text("El texto de la funcionalidad no puede estar vacio.")
         return
@@ -2170,22 +2214,11 @@ async def cmd_listfunc(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     lineas: list[str] = []
     for i, f in enumerate(todas, 1):
         emoji = _PRIORIDAD_EMOJI.get(f.prioridad, "")
-        txt = (
-            (f.texto[:FUNC_RESUMEN_MAX] + "...")
-            if len(f.texto) > FUNC_RESUMEN_MAX
-            else f.texto
-        )
-        lineas.append(f"{i}. {emoji} P{f.prioridad} {txt}")
+        lineas.append(f"{i}. {emoji} {f.texto}")
 
     cabecera = f"Funcionalidades ({len(todas)}):\n\n"
     texto_completo = cabecera + "\n".join(lineas)
-
-    MAX_MSG = 4000
-    if len(texto_completo) <= MAX_MSG:
-        await update.message.reply_text(texto_completo)
-    else:
-        await update.message.reply_text(texto_completo[:MAX_MSG])
-        await update.message.reply_text(texto_completo[MAX_MSG:])
+    await _reply_texto_largo(update, texto_completo)
 
 
 def _formatear_funcionalidad_completa(f: Funcionalidad) -> str:
@@ -2418,6 +2451,168 @@ def _partir_audio_titulo_y_fecha(contenido: str) -> tuple[str, str]:
     return texto, ""
 
 
+def _extraer_duracion_evento_y_resto(texto: str) -> tuple[timedelta | None, str]:
+    """Quita 'durante X horas/días/minutos' (o una/media hora) y devuelve timedelta."""
+    s = " ".join((texto or "").split())
+    if not s:
+        return None, s
+    low = s.lower()
+
+    def cut(m: re.Match) -> str:
+        frag = (s[: m.start()] + s[m.end() :]).strip()
+        return " ".join(frag.split())
+
+    m = re.search(r"\bdurante\s+(\d+)\s*horas?\b", s, flags=re.IGNORECASE)
+    if m:
+        return timedelta(hours=int(m.group(1))), cut(m)
+    m = re.search(r"\bdurante\s+(\d+)\s*d[ií]as?\b", s, flags=re.IGNORECASE)
+    if m:
+        return timedelta(days=int(m.group(1))), cut(m)
+    m = re.search(r"\bdurante\s+(\d+)\s*minutos?\b", s, flags=re.IGNORECASE)
+    if m:
+        return timedelta(minutes=int(m.group(1))), cut(m)
+    if re.search(r"\bdurante\s+una\s+hora\b", low):
+        m = re.search(r"\bdurante\s+una\s+hora\b", s, flags=re.IGNORECASE)
+        if m:
+            return timedelta(hours=1), cut(m)
+    if re.search(r"\bdurante\s+media\s+hora\b", low):
+        m = re.search(r"\bdurante\s+media\s+hora\b", s, flags=re.IGNORECASE)
+        if m:
+            return timedelta(minutes=30), cut(m)
+    return None, s
+
+
+def _ajustar_hora_12_periodo(h: int, periodo: str) -> int:
+    pl = periodo.lower().replace("ñ", "n")
+    if pl in ("manana", "madrugada"):
+        return h
+    if pl in ("tarde", "noche"):
+        if h == 12:
+            return 12
+        if 1 <= h <= 11:
+            return h + 12
+    return h
+
+
+def _token_a_hora_base(tok: str) -> int | None:
+    t = tok.strip().lower()
+    if t.isdigit():
+        n = int(t)
+        if 0 <= n <= 23:
+            return n
+        return None
+    return _HORA_PALABRA_A_NUM.get(t)
+
+
+def _extraer_hora_evento_coloquial_y_resto(s: str) -> tuple[str | None, str]:
+    """Quita hora (HH:MM o 'a las …' / '… de la tarde') y devuelve (HH:MM, resto)."""
+    s = " ".join((s or "").split())
+    if not s:
+        return None, s
+
+    m = re.search(r"\b([01]?\d|2[0-3]):[0-5]\d\b", s)
+    if m:
+        hora = m.group(0)
+        resto = (s[: m.start()] + s[m.end() :]).strip()
+        return hora, " ".join(resto.split())
+
+    pat_a_las = re.compile(
+        r"\ba\s+las\s+"
+        r"(\d{1,2}|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)"
+        r"(?P<mc1>\s+menos\s+cuarto)?"
+        r"(?P<ym>\s+y\s+(media|cuarto))?"
+        r"(?P<per>\s+de\s+la\s+(mañana|manana|madrugada|tarde|noche))?",
+        re.IGNORECASE,
+    )
+    m2 = pat_a_las.search(s)
+    if m2:
+        tok = m2.group(1)
+        hb = _token_a_hora_base(tok)
+        if hb is None:
+            return None, s
+        menos = m2.group("mc1") is not None
+        y_m = m2.group("ym") or ""
+        y_kind = None
+        my = re.search(r"y\s+(media|cuarto)\b", y_m, re.IGNORECASE)
+        if my:
+            y_kind = my.group(1).lower()
+        per_raw = m2.group("per") or ""
+        periodo = None
+        if per_raw:
+            mper = re.search(
+                r"de\s+la\s+(mañana|manana|madrugada|tarde|noche)", per_raw, re.IGNORECASE
+            )
+            if mper:
+                periodo = mper.group(1)
+
+        if menos:
+            if hb > 12:
+                return None, s
+            h12 = hb
+            total = h12 * 60 - 15
+            if total < 0:
+                total += 24 * 60
+            h = (total // 60) % 24
+            minute = total % 60
+        else:
+            minute = 0
+            if y_kind == "media":
+                minute = 30
+            elif y_kind == "cuarto":
+                minute = 15
+            if hb > 12:
+                h = hb
+            elif periodo:
+                h = _ajustar_hora_12_periodo(hb, periodo)
+            else:
+                h = hb
+
+        hora_str = f"{h % 24:02d}:{minute:02d}"
+        resto = (s[: m2.start()] + s[m2.end() :]).strip()
+        return hora_str, " ".join(resto.split())
+
+    pat_de_la = re.compile(
+        r"\b(\d{1,2}|una|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)"
+        r"(?:\s+y\s+(media|cuarto))?\s+de\s+la\s+(mañana|manana|madrugada|tarde|noche)\b",
+        re.IGNORECASE,
+    )
+    m3 = pat_de_la.search(s)
+    if m3:
+        tok = m3.group(1)
+        hb = _token_a_hora_base(tok)
+        if hb is None or hb > 12:
+            return None, s
+        y_kind = m3.group(2).lower() if m3.group(2) else None
+        periodo = m3.group(3)
+        minute = 0
+        if y_kind == "media":
+            minute = 30
+        elif y_kind == "cuarto":
+            minute = 15
+        h = _ajustar_hora_12_periodo(hb, periodo)
+        hora_str = f"{h % 24:02d}:{minute:02d}"
+        resto = (s[: m3.start()] + s[m3.end() :]).strip()
+        return hora_str, " ".join(resto.split())
+
+    return None, s
+
+
+def _formatear_duracion_usuario(d: timedelta) -> str:
+    sec = int(d.total_seconds())
+    if sec <= 0:
+        return "0 min"
+    if sec % 86400 == 0:
+        n = sec // 86400
+        return f"{n} dia(s)" if n != 1 else "1 dia"
+    if sec % 3600 == 0:
+        n = sec // 3600
+        return f"{n} hora(s)" if n != 1 else "1 hora"
+    if sec % 60 == 0:
+        n = sec // 60
+        return f"{n} minutos" if n != 1 else "1 minuto"
+    return str(d)
+
+
 def _parsear_tarea_audio_payload(contenido: str) -> tuple[str, str | None, str]:
     """
     Tarea por voz: con 'para el' o 'para' + fecha, el título va antes y la fecha (y resto) después.
@@ -2437,43 +2632,41 @@ def _parsear_tarea_audio_payload(contenido: str) -> tuple[str, str | None, str]:
     return strip_sufijo_para_el(tit), fec, desc
 
 
-def _parsear_args_evento(texto_raw: str) -> tuple[str, str | None, str | None]:
-    """Parsea nombre del evento, fecha flexible (DD/MM/YY, etc.) y hora opcional HH:MM."""
+def _parsear_args_evento(
+    texto_raw: str,
+) -> tuple[str, str | None, str | None, timedelta | None]:
+    """Parsea titulo, fecha, hora HH:MM (tambien coloquial) y duracion opcional."""
     texto = texto_raw.strip()
     if not texto:
-        return "", None, None
+        return "", None, None, None
 
-    time_match = re.search(r"\b(?:[01]?\d|2[0-3]):[0-5]\d\b", texto)
-    if time_match:
-        hora = time_match.group(0)
-        texto_sin_hora = (texto[: time_match.start()] + texto[time_match.end() :]).strip()
-    else:
-        hora = None
-        texto_sin_hora = texto
+    dur, texto = _extraer_duracion_evento_y_resto(texto)
+    fecha, titulo_raw = _extraer_fecha_formato_espanol(texto)
+    hora, titulo_sin_hora = _extraer_hora_evento_coloquial_y_resto(titulo_raw)
 
-    fecha, titulo_raw = _extraer_fecha_formato_espanol(texto_sin_hora)
-
-    partes_quoted = re.findall(r'"([^"]*)"', titulo_raw)
+    partes_quoted = re.findall(r'"([^"]*)"', titulo_sin_hora)
     if partes_quoted:
         titulo = partes_quoted[0]
     else:
-        titulo = titulo_raw
+        titulo = titulo_sin_hora
 
     titulo = strip_sufijo_para_fecha(titulo.strip())
-    return titulo, fecha, hora
+    return titulo, fecha, hora, dur
 
 
-def _parsear_evento_audio_payload(contenido: str) -> tuple[str, str | None, str | None]:
+def _parsear_evento_audio_payload(
+    contenido: str,
+) -> tuple[str, str | None, str | None, timedelta | None]:
     """Evento por voz: con 'para el' o 'para' + fecha, nombre antes y fecha/hora después."""
     antes, despues = _partir_audio_titulo_y_fecha(contenido)
     if despues.strip():
-        n2, fecha_ev, hora_ev = _parsear_args_evento(despues)
+        n2, fecha_ev, hora_ev, dur_ev = _parsear_args_evento(despues)
         nombre = (antes.strip() or n2.strip()).strip()
-        return strip_sufijo_para_el(nombre), fecha_ev, hora_ev
-    nom, fe, ho = _parsear_args_evento(contenido)
+        return strip_sufijo_para_el(nombre), fecha_ev, hora_ev, dur_ev
+    nom, fe, ho, du = _parsear_args_evento(contenido)
     if not fe:
         nom = strip_sufijo_para_el(nom)
-    return nom, fe, ho
+    return nom, fe, ho, du
 
 
 def _extraer_tipo_fabrica(texto: str) -> tuple[str, str]:
@@ -2493,6 +2686,14 @@ def _extraer_tipo_fabrica(texto: str) -> tuple[str, str]:
     return tipo, " ".join(t.split())
 
 
+def _partir_titulo_fabrica_ocho_palabras(titulo: str) -> tuple[str, str]:
+    """Titulo Deck corto (max 8 palabras); el resto pasa a descripcion."""
+    w = (titulo or "").strip().split()
+    if len(w) <= 8:
+        return (titulo or "").strip(), ""
+    return " ".join(w[:8]).strip(), " ".join(w[8:]).strip()
+
+
 def _parsear_texto_fabrica(texto_raw: str) -> tuple[str, str, str, str | None, str]:
     """titulo, medidas, tipo (laser|3d|''), fecha_iso YYYY-MM-DD|None, notas."""
     t = texto_raw.strip()
@@ -2505,8 +2706,11 @@ def _parsear_texto_fabrica(texto_raw: str) -> tuple[str, str, str, str | None, s
         medidas = m.group(0).strip()
         t = (t[: m.start()] + t[m.end() :]).strip()
         t = " ".join(t.split())
-    titulo, fecha_iso, notas = _parsear_args_tarea(t)
-    return titulo.strip(), medidas, tipo, fecha_iso, notas.strip()
+    titulo_largo, fecha_iso, notas = _parsear_args_tarea(t)
+    titulo, resto_tit = _partir_titulo_fabrica_ocho_palabras(titulo_largo.strip())
+    bloques = [x for x in (resto_tit, notas.strip()) if x]
+    notas_f = "\n".join(bloques) if bloques else ""
+    return titulo, medidas, tipo, fecha_iso, notas_f.strip()
 
 
 def _descripcion_deck_fabrica(medidas: str, tipo: str, notas: str) -> str:
@@ -3089,9 +3293,160 @@ async def cmd_cancelarmodfab(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.message.reply_text("Edicion de fabricacion cancelada.")
 
 
+def _texto_menu_mod_proyecto(proyecto_id: str) -> str:
+    lineas = [
+        f"Modificando proyecto (id {proyecto_id}). Elige campo (0 = salir):",
+    ]
+    for i, (_k, label) in enumerate(CAMPOS_MOD_PROYECTO, 1):
+        lineas.append(f"{i}. {label}")
+    return "\n".join(lineas)
+
+
+async def _manejar_wizard_mod_proyecto(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    wizard = context.chat_data.get(WIZARD_MOD_PROYECTO_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or wizard.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        return False
+    pid = wizard["proyecto_id"]
+    fase = wizard.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_PROYECTO_KEY, None)
+            await update.message.reply_text("Listo (sin mas cambios).")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Envia un numero de campo o 0 para salir.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_PROYECTO):
+            await update.message.reply_text("Numero invalido.")
+            return True
+        _key, label = CAMPOS_MOD_PROYECTO[n - 1]
+        wizard["fase"] = "valor"
+        wizard["campo_key"] = _key
+        await update.message.reply_text(
+            f"Nuevo valor para: {label}\n"
+            f"(una linea; '-' para vaciar donde aplique)\n/cancelarmodproyecto para abortar."
+        )
+        return True
+
+    key = wizard.get("campo_key")
+    if not key:
+        wizard["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_proyecto(pid))
+        return True
+
+    p0 = buscar_proyecto_por_id(pid)
+    if not p0:
+        context.chat_data.pop(WIZARD_MOD_PROYECTO_KEY, None)
+        await update.message.reply_text("Proyecto no encontrado; wizard cerrado.")
+        return True
+
+    val_raw = "" if text in ("-", "—") else text
+    if key == "fecha_fin":
+        if not val_raw:
+            val_store = ""
+        else:
+            dt = parsear_solo_fecha(val_raw)
+            if dt is None:
+                await update.message.reply_text(
+                    "Fecha no reconocida. Usa el mismo formato que en el alta o '-'."
+                )
+                return True
+            val_store = formatear_fecha(dt)
+    elif key == "estado":
+        est = val_raw.lower().strip()
+        if est not in ESTADOS_PROYECTO_VALIDOS:
+            await update.message.reply_text(
+                "Estado no valido: idea, activo, en_espera, presupuestado, completado, cancelado"
+            )
+            return True
+        val_store = est
+    elif key == "email_contacto":
+        if not val_raw:
+            await update.message.reply_text("El email no puede quedar vacio.")
+            return True
+        if not _email_valido_proyecto(val_raw):
+            await update.message.reply_text("Email no valido.")
+            return True
+        val_store = val_raw.strip()
+    elif key in ("presupuesto", "tags"):
+        val_store = val_raw
+    else:
+        if not val_raw and key == "titulo":
+            await update.message.reply_text("El titulo no puede estar vacio.")
+            return True
+        val_store = val_raw
+
+    p1 = replace(p0, **{key: val_store})
+    if not actualizar_proyecto(p1):
+        await update.message.reply_text("No se pudo guardar.")
+        context.chat_data.pop(WIZARD_MOD_PROYECTO_KEY, None)
+        return True
+
+    wizard["fase"] = "menu"
+    wizard.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_proyecto(pid)
+    )
+    return True
+
+
+async def cmd_modproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modproyecto <numero>\nEl numero es el de /listproyectos en este chat."
+        )
+        return
+    arg = context.args[0].strip()
+    p: Proyecto | None = None
+    if arg.isdigit():
+        p = _proyecto_desde_indice_listado(context, int(arg))
+    if p is None:
+        p = buscar_proyecto_por_id(arg)
+    if not p:
+        await update.message.reply_text(
+            "No se encontro ese proyecto.\nUsa /listproyectos en este chat."
+        )
+        return
+    user = update.effective_user
+    if not user:
+        return
+    context.chat_data[WIZARD_MOD_PROYECTO_KEY] = {
+        "user_id": user.id,
+        "proyecto_id": p.id,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_proyecto(p.id) + "\n\n/cancelarmodproyecto para salir."
+    )
+
+
+async def cmd_cancelarmodproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_PROYECTO_KEY, None)
+    await update.message.reply_text("Edicion de proyecto cancelada.")
+
+
 async def _ejecutar_creacion_evento_desde_texto(update: Update, texto_raw: str) -> bool:
     """Crea evento CalDAV desde texto ya sin prefijo /evento. Devuelve True si se creó."""
-    nombre, fecha_ev, hora_ev = _parsear_args_evento(texto_raw)
+    nombre, fecha_ev, hora_ev, dur_ev = _parsear_args_evento(texto_raw)
 
     if not nombre:
         await update.message.reply_text("El nombre del evento no puede estar vacio.")
@@ -3121,13 +3476,23 @@ async def _ejecutar_creacion_evento_desde_texto(update: Update, texto_raw: str) 
             )
             return False
 
+    dur_kw = dur_ev if hora_ev else None
     msg = await update.message.reply_text("Creando evento en el calendario...")
-    ok = crear_evento(nombre, fecha_iso, hora=hora_ev)
+    ok = crear_evento(nombre, fecha_iso, hora=hora_ev, duracion=dur_kw)
 
     if ok:
         partes = [f"Evento creado: {nombre}", f"Fecha: {fecha_ev}"]
         if hora_ev:
-            partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+            if dur_ev:
+                partes.append(
+                    f"Hora inicio: {hora_ev} (duracion {_formatear_duracion_usuario(dur_ev)})"
+                )
+            else:
+                partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+        elif dur_ev:
+            partes.append(
+                "Nota: sin hora concreta el evento es de dia completo; la duracion no se aplico."
+            )
         await msg.edit_text("\n".join(partes))
         return True
     err = obtener_ultimo_error_evento()
@@ -3146,11 +3511,13 @@ async def cmd_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if not texto_raw:
         await update.message.reply_text(
-            "Uso: /evento <nombre> <fecha> [HH:MM]\n"
+            "Uso: /evento <nombre> <fecha> [hora] [duracion]\n"
             "Fecha: DD-MM-AAAA o DD/MM/AAAA; año 2 cifras -> 20YY; DD-MM sin año = año actual; "
             "solo DD (1-31, unico en el texto) = mes actual; antier/ayer/hoy/mañana/pasado; "
             "o nombre de dia (proximo lunes, martes, …).\n"
-            "Ejemplo: /evento Reunion 20-03-26 14:30"
+            "Hora: HH:MM o coloquial (a las 5 y media de la tarde, siete de la tarde).\n"
+            "Duracion: durante 2 horas, durante 3 dias, durante 30 minutos, durante una hora.\n"
+            "Ejemplo: /evento Reunion 20-03-26 a las 14:30 durante 2 horas"
         )
         return
 
@@ -4508,6 +4875,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if await _manejar_wizard_mod_fabrica(update, context):
         return
+    if await _manejar_wizard_mod_proyecto(update, context):
+        return
     if await _manejar_wizard_proyecto(update, context):
         return
     texto = update.message.text or ""
@@ -4712,7 +5081,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             return
 
         elif accion == "evento":
-            nombre_ev, fecha_ev, hora_ev = _parsear_evento_audio_payload(contenido)
+            nombre_ev, fecha_ev, hora_ev, dur_ev = _parsear_evento_audio_payload(contenido)
             if not fecha_ev:
                 await estado.edit_text(
                     "El evento necesita fecha. Por voz: evento <nombre> para|para el 20-03 [15:30], "
@@ -4740,14 +5109,24 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                         f"Hora invalida: {hora_ev}\nUsa HH:MM en 24 h"
                     )
                     return
-            ok = crear_evento(nombre_ev, fecha_iso_ev, hora=hora_ev)
+            dur_kw = dur_ev if hora_ev else None
+            ok = crear_evento(nombre_ev, fecha_iso_ev, hora=hora_ev, duracion=dur_kw)
             if ok:
                 partes = [
                     f"Evento creado desde audio: {nombre_ev}",
                     f"Fecha: {fecha_ev}",
                 ]
                 if hora_ev:
-                    partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+                    if dur_ev:
+                        partes.append(
+                            f"Hora inicio: {hora_ev} (duracion {_formatear_duracion_usuario(dur_ev)})"
+                        )
+                    else:
+                        partes.append(f"Hora inicio: {hora_ev} (duracion 1 h)")
+                elif dur_ev:
+                    partes.append(
+                        "Nota: sin hora, evento de dia completo; duracion no aplicada."
+                    )
                 await estado.edit_text("\n".join(partes))
             else:
                 err_ev = obtener_ultimo_error_evento()
@@ -4881,6 +5260,8 @@ def main() -> None:
     app.add_handler(CommandHandler("listproyecto", cmd_listproyectos))
     app.add_handler(CommandHandler("verproyecto", cmd_verproyecto))
     app.add_handler(CommandHandler("rmproyecto", cmd_rmproyecto))
+    app.add_handler(CommandHandler("modproyecto", cmd_modproyecto))
+    app.add_handler(CommandHandler("cancelarmodproyecto", cmd_cancelarmodproyecto))
     app.add_handler(CommandHandler("tiempo", cmd_tiempo))
     app.add_handler(CommandHandler("tiempofin", cmd_tiempofin))
     app.add_handler(CommandHandler("listtiempo", cmd_listtiempo))
@@ -4929,6 +5310,61 @@ def main() -> None:
     app.add_handler(CommandHandler("verfactura", cmd_verfactura))
     app.add_handler(CommandHandler("rmfactura", cmd_rmfactura))
     app.add_handler(CommandHandler("modfactura", cmd_modfactura))
+    # Alias: /ls* = /list*, /v* = /ver*, y abreviaturas por tema
+    for _alias, _cmd in (
+        ("lsconvo", cmd_listar),
+        ("lscv", cmd_listar),
+        ("vconvo", cmd_verconvo),
+        ("vcv", cmd_verconvo),
+        ("lsurl", cmd_listurl),
+        ("vurl", cmd_verurl),
+        ("lsideas", cmd_listideas),
+        ("lsid", cmd_listideas),
+        ("videa", cmd_veridea),
+        ("vid", cmd_veridea),
+        ("lsmemorias", cmd_listmemorias),
+        ("lsmm", cmd_listmemorias),
+        ("vmm", cmd_vermemoria),
+        ("proy", cmd_proyecto),
+        ("py", cmd_proyecto),
+        ("lsproyectos", cmd_listproyectos),
+        ("lsproy", cmd_listproyectos),
+        ("lspy", cmd_listproyectos),
+        ("vproyecto", cmd_verproyecto),
+        ("vproy", cmd_verproyecto),
+        ("vpy", cmd_verproyecto),
+        ("modproy", cmd_modproyecto),
+        ("modpy", cmd_modproyecto),
+        ("lstm", cmd_listtiempo),
+        ("vtm", cmd_vertiempo),
+        ("lsinvestigaciones", cmd_listinvestigaciones),
+        ("lsinv", cmd_listinvestigaciones),
+        ("vinvestigacion", cmd_verinvestigacion),
+        ("vinv", cmd_verinvestigacion),
+        ("lsfunc", cmd_listfunc),
+        ("lsfn", cmd_listfunc),
+        ("vfunc", cmd_verfunc),
+        ("vfn", cmd_verfunc),
+        ("lsfab", cmd_listfab),
+        ("vfab", cmd_verfab),
+        ("lseventos", cmd_listeventos),
+        ("lsev", cmd_listeventos),
+        ("vevento", cmd_verevento),
+        ("vev", cmd_verevento),
+        ("lstareas", cmd_listtareas),
+        ("lst", cmd_listtareas),
+        ("vtarea", cmd_vertarea),
+        ("vt", cmd_vertarea),
+        ("lspendientes", cmd_listpendientes),
+        ("lspen", cmd_listpendientes),
+        ("vpendiente", cmd_verpendiente),
+        ("vpen", cmd_verpendiente),
+        ("fct", cmd_factura),
+        ("vfct", cmd_verfactura),
+        ("lscontabilidad", cmd_listcontabilidad),
+        ("lsfct", cmd_listcontabilidad),
+    ):
+        app.add_handler(CommandHandler(_alias, _cmd))
     app.add_handler(
         MessageHandler(
             filters.PHOTO | filters.Document.MimeType("application/pdf"),

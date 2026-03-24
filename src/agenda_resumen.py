@@ -65,6 +65,12 @@ def texto_agenda_proximos_dias(dias: int = 7) -> str:
             suf = f" ({cal})" if cal else ""
             lineas.append(f"  • [{ev['start_iso']}]{suf} {ev['summary']}")
         lineas.append("")
+    elif deck or vtodos:
+        err_ev = obtener_ultimo_error_evento()
+        if err_ev:
+            lineas.append(
+                f"(Sin eventos CalDAV en esta ventana; si esperabas alguno: {err_ev})\n"
+            )
 
     if deck:
         lineas.append("Tareas Deck (vencimiento en ventana):")

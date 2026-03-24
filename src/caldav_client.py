@@ -293,11 +293,13 @@ def crear_evento(
     descripcion: str = "",
     url: str = "",
     hora: str | None = None,
+    duracion: timedelta | None = None,
 ) -> bool:
     """
     Crea un evento en el calendario Nextcloud/CalDAV (colección según CALDAV_*).
     fecha: YYYY-MM-DD, o legado: datetime ISO compacto si no coincide con solo fecha.
-    hora: opcional HH:MM (24 h); el evento dura 1 hora desde ese inicio.
+    hora: opcional HH:MM (24 h); sin duracion el evento dura 1 h desde ese inicio.
+    duracion: opcional; si hay hora, define DTEND (o se usa 1 h por defecto).
     """
     _set_last_evento_error("")
     if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
@@ -354,7 +356,10 @@ def crear_evento(
             h = hora.strip()
             datetime.strptime(h, "%H:%M")
             d0 = datetime.strptime(f"{fecha_norm} {h}", "%Y-%m-%d %H:%M")
-            d1 = d0 + timedelta(hours=1)
+            delta = duracion if duracion is not None else timedelta(hours=1)
+            if delta.total_seconds() <= 0:
+                delta = timedelta(hours=1)
+            d1 = d0 + delta
             event.add("dtstart", d0)
             event.add("dtend", d1)
         else:
@@ -577,19 +582,30 @@ def listar_tareas(include_completed: bool = False) -> list[dict]:
     return resultado
 
 
-def _vevent_start_for_sort(comp) -> datetime | None:
-    """Extrae inicio del VEVENT como datetime naive (fecha a medianoche si es date)."""
+def _vevent_start_local_naive(comp) -> datetime | None:
+    """
+    Inicio del VEVENT como datetime naive en hora local (APP_TIMEZONE).
+    Los DTSTART con TZ (p. ej. UTC) se convierten antes de comparar con la ventana local.
+    """
+    from src.fecha_display import _zona
+
     ds = comp.get("dtstart")
     if not ds:
         return None
     dt = ds.dt if hasattr(ds, "dt") else ds
+    tz = _zona()
     if hasattr(dt, "hour"):
         if getattr(dt, "tzinfo", None):
-            return dt.replace(tzinfo=None)
+            return dt.astimezone(tz).replace(tzinfo=None)
         return dt
     if hasattr(dt, "year"):
         return datetime.combine(dt, time.min)
     return None
+
+
+def _vevent_start_for_sort(comp) -> datetime | None:
+    """Compat: mismo que _vevent_start_local_naive."""
+    return _vevent_start_local_naive(comp)
 
 
 def _vevent_summary_uid(comp) -> tuple[str, str]:
@@ -699,7 +715,9 @@ def listar_eventos_proximos_dias(dias: int) -> list[dict]:
     """
     if dias < 1:
         dias = 1
-    today_d = datetime.now().date()
+    from src.fecha_display import fecha_hoy_relativas
+
+    today_d = fecha_hoy_relativas()
     win_start = datetime.combine(today_d, time.min)
     win_end_excl = win_start + timedelta(days=int(dias))
     return listar_eventos_en_ventana(win_start, win_end_excl)

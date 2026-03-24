@@ -22,6 +22,7 @@ CAMPOS_PROYECTO = [
     "tiempo_total",
     "fecha_fin",
     "estado",
+    "tags",
     "ruta",
     "fuente",
 ]
@@ -42,6 +43,7 @@ class Proyecto:
     tiempo_total: str  # minutos totales (entero como texto)
     fecha_fin: str
     estado: str
+    tags: str
     ruta: str
     fuente: str
 
@@ -56,6 +58,7 @@ class Proyecto:
             "tiempo_total": self.tiempo_total,
             "fecha_fin": self.fecha_fin,
             "estado": self.estado,
+            "tags": self.tags,
             "ruta": self.ruta,
             "fuente": self.fuente,
         }
@@ -72,6 +75,7 @@ def _fila_a_proyecto(fila: dict) -> Proyecto:
         tiempo_total=fila.get("tiempo_total", "0"),
         fecha_fin=fila.get("fecha_fin", ""),
         estado=fila.get("estado", "idea"),
+        tags=fila.get("tags", ""),
         ruta=fila.get("ruta", ""),
         fuente=fila.get("fuente", "telegram"),
     )
