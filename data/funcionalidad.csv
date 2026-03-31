@@ -16,11 +16,10 @@ ca8f6bdef3042363,Ya he instalado cursor Cli para utilizarlo desde la línea de c
 7780731cb23a3244,reflexionar sobre usar las notas de nextcloud para almacenar la información de Convocautorias prioridad,2,pendiente,2026-03-23T14:09:47.092158,telegram
 14925fd24f5c2f1f,"Reducir, limpiar y resumir Es dexto de ayuda",5,pendiente,2026-03-23T21:27:49.374631,telegram_audio
 536fe3afc045ca85,conectar a armonía con los sensores de temperatura y con los biodata que están publicando en la base de influcs de b.,2,pendiente,2026-03-24T08:02:14.394874,telegram_audio
-<<<<<<< HEAD
 2cce97883233e827,poder modificar las investigaciones /modinvestigaciones prioridad,4,pendiente,2026-03-24T13:04:57.113737,telegram
 5680788962cbb13c,quiero poder modificar cualquier elemento de cualquier categoría con /mod<categoria> <numero> y un wizzard me llevará por los campos para sobreescribir los campos prioridad,5,pendiente,2026-03-24T13:07:23.512050,telegram
-b09ff4f4b376dd01,"quiero un aliar para /informame que sea /info <numero> para traer la información de los próximos <numero> días por defecto 7. Habrá que resolver permisos de los calendarios, quiero que me traiga información tb del personal dependiendo del usuario. prioridad",5,pendiente,2026-03-24T13:13:11.723814,telegram
-b97d5d8fd3ee0a5a,parece ser que el problema de los calendarios se debe a que no están en el mismo calendario de bot. prioridad,5,pendiente,2026-03-24T13:14:13.338282,telegram
 21f9426bf635c59f,"cambiar la visualización de las fechas a 30 de abril en lugar de 30, 03,",4,pendiente,2026-03-24T16:01:30.420227,telegram
-=======
->>>>>>> c0db83b (incluir todos los archivos)
+1c9cca10d75802f9,"nueva funcionalidad notas con sus respectivos ls, rm, mod, v. Que se integre con el sistema de notas de nextcloud pero con el usuario de telegram/nextcloud, no con bot",4,pendiente,2026-03-27T08:11:03.302733,telegram
+1296e86322785b40,"revisar los alias, /fn no funciona y hay algún otro que tp",5,pendiente,2026-03-27T08:12:05.575660,telegram
+9781973af10e6747,poder introducir registros de huevos de días pasados con /modhuevos,3,pendiente,2026-03-27T08:14:36.789663,telegram
+3eebe67487d0532a,"Nueva funcionalidad recomendaciones de artistas, escritores, etc. /recomendacion con todo lo que conlleva",4,pendiente,2026-03-27T09:48:20.589274,telegram
