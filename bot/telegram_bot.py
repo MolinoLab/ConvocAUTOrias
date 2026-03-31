@@ -76,6 +76,7 @@ from src.db_enlaces import (
 )
 from src.agenda_resumen import texto_agenda_proximos_dias
 from src.caldav_client import (
+    actualizar_evento_por_url,
     borrar_evento_por_url,
     crear_evento,
     formatear_detalle_evento_por_url,
@@ -99,11 +100,28 @@ from src.db_fabrica import (
     eliminar_por_id as eliminar_fabrica_por_id,
     leer_fabrica,
 )
-from src.db_diario import añadir_entrada as diario_añadir_entrada
+from src.db_diario import (
+    actualizar_entrada as actualizar_diario_entrada,
+    añadir_entrada as diario_añadir_entrada,
+    buscar_por_id as buscar_diario_por_id,
+    eliminar_por_id as eliminar_diario_por_id,
+    listar_recientes as listar_diario_recientes,
+)
 from src.db_huevos import (
+    actualizar_registro as actualizar_huevo_registro,
     añadir as añadir_huevo,
+    buscar_por_id as buscar_huevo_por_id,
+    eliminar_por_id as eliminar_huevo_por_id,
+    listar_registros_recientes,
     resumen_ultimos_dias_desde_hoy,
     total_cantidad_en_fecha,
+)
+from src.db_recomendaciones import (
+    actualizar as actualizar_recomendacion,
+    añadir as añadir_recomendacion,
+    buscar_por_id as buscar_recomendacion_por_id,
+    eliminar_por_id as eliminar_recomendacion_por_id,
+    listar_recientes as listar_recomendaciones_recientes,
 )
 from src.db_pendientes import (
     Pendiente,
@@ -125,6 +143,7 @@ from src.db_proyectos import (
 )
 from src.db_tiempos import (
     Tiempo,
+    actualizar_tiempo,
     añadir_tiempo,
     buscar_activo_global,
     buscar_por_id as buscar_tiempo_por_id,
@@ -134,16 +153,19 @@ from src.db_tiempos import (
     leer_tiempos,
     sincronizar_tiempo_total_proyecto,
 )
+from src import notes_nextcloud
 from src.fechas_proyecto import (
     formatear_fecha,
     formatear_fecha_hora,
     formatear_minutos_como_texto,
+    minutos_entre,
     parsear_fecha_hora,
     parsear_solo_fecha,
 )
 from src.plazo import es_futura, clave_orden, parsear_plazo
 from src.scraper import extraer
 from src.fecha_display import (
+    extraer_cuerpo_y_fecha_dia_para_el,
     extraer_fecha_natural_dd_mm_yyyy_y_resto,
     extraer_fecha_relativa_dd_mm_yyyy,
     fecha_hoy_relativas,
@@ -197,6 +219,14 @@ CACHE_RM_MEMORIAS = "rm_memoria_ids"
 CACHE_RM_PENDIENTES_IDS = "rm_pendiente_ids"
 CACHE_RM_CONTABILIDAD_IDS = "rm_contabilidad_ids"
 CACHE_RM_FABRICA = "rm_fabrica_ids"
+CACHE_RM_HUEVO_IDS = "rm_huevo_ids"
+CACHE_RM_DIARIO_IDS = "rm_diario_ids"
+CACHE_RM_NOTAS_IDS = "rm_notas_ids"
+CACHE_RM_REC_IDS = "rm_rec_ids"
+WIZARD_MOD_TAREA_KEY = "mod_tarea_wizard"
+WIZARD_MOD_EVENTO_KEY = "mod_evento_wizard"
+WIZARD_MOD_TIEMPO_KEY = "mod_tiempo_wizard"
+WIZARD_MOD_NOTA_KEY = "mod_nota_wizard"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
 WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
 WIZARD_MOD_FABRICA_KEY = "mod_fabrica_wizard"
@@ -297,6 +327,33 @@ MOD_LISTA_CAMPOS: dict[str, tuple[str, list[tuple[str, str]], str]] = {
             ("fuente", "Fuente"),
         ],
         "/listpendientes",
+    ),
+    "rec": (
+        CACHE_RM_REC_IDS,
+        [
+            ("tipo", "Tipo (artista, escritor, ...)"),
+            ("nombre", "Nombre"),
+            ("notas", "Notas"),
+            ("tags", "Tags"),
+            ("fuente", "Fuente"),
+        ],
+        "/listrecomendaciones",
+    ),
+    "diario": (
+        CACHE_RM_DIARIO_IDS,
+        [
+            ("resumen", "Resumen"),
+        ],
+        "/listdiario",
+    ),
+    "huevo": (
+        CACHE_RM_HUEVO_IDS,
+        [
+            ("cantidad", "Cantidad (entero)"),
+            ("fecha", "Fecha (YYYY-MM-DD)"),
+            ("fuente", "Fuente"),
+        ],
+        "/listregistroshuevos",
     ),
 }
 
@@ -654,7 +711,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/tiempo <num_proyecto> <minutos> — Sumar tiempo (hoy desde 00:00)\n"
         "/listtiempo — Listar registros (indice para /modtiempo)\n"
         "/vertiempo <numero>\n"
-        "/modtiempo <num_tiempo> <fecha hora fin> — Corregir fin y duracion\n\n"
+        "/modtiempo <numero> — Wizard (proyecto/inicio/fin); /cancelarmodtiempo\n"
+        "/modtiempo <num_tiempo> <fecha hora fin> — Solo corregir fin y duracion\n\n"
         "[Funcionalidades]\n"
         "/func <texto> [prioridad 1-5] — Registrar (prioridad por defecto 3)\n"
         "/listfunc o /listfuncionalidades — Listar por prioridad\n"
@@ -672,6 +730,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f'/comprar "Titulo" [fecha] ["Desc"] — Columna "{DECK_STACK_COMPRAR}"\n'
         "/listtareas — Listar por fecha\n"
         "/vertarea <numero> — Detalle de la tarjeta\n"
+        "/modtarea <numero> — Edicion guiada (titulo, desc, vencimiento); /cancelarmodtarea\n"
         "/rmtarea <num ...>\n\n"
         "[Fabricación Deck]\n"
         f"/fabrica o /fab <texto> — Columna \"{config.DECK_STACK_FABRICAR or 'Fabricar'}\" "
@@ -687,12 +746,34 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/informame — Agenda proximos 7 dias (CalDAV equipo + personal si aplica + Deck + VTODO)\n"
         "/info [dias] — Igual que /informame; dias por defecto 7 (max 90)\n"
         "/verevento <numero>\n"
+        "/modevento <numero> — Edicion guiada; /cancelarmodevento\n"
         "/rmevento <num ...>\n\n"
         "[Huevos]\n"
         "/huevos <cantidad> — Registro del dia (la respuesta muestra total acumulado del dia)\n"
-        "/listhuevos [dias] — Resumen hacia atras (6 por defecto)\n\n"
+        "/listhuevos [dias] — Resumen por dia hacia atras (6 por defecto)\n"
+        "/listregistroshuevos [n] — Ultimos registros individuales (indice p. ver/mod/rmhuevo)\n"
+        "/verhuevo <n>\n"
+        "/modhuevo <n> — Edicion guiada (/cancelarmodlista)\n"
+        "/rmhuevo <num ...>\n\n"
         "[Diario]\n"
-        "/diario <texto> — Nota del dia (data/diario/AAAA-MM-DD.md + diario.csv)\n\n"
+        "/diario <texto> — Nota del dia; al final: para el <fecha> (antigua o relativa)\n"
+        "/listdiario [n] — Ultimas entradas en diario.csv\n"
+        "/verdiario <n>\n"
+        "/moddiario <n> — Resumen (/cancelarmodlista)\n"
+        "/rmdiario <num ...>\n\n"
+        "[Recomendaciones]\n"
+        "/rec o /recomendacion <tipo> <nombre> [notas]\n"
+        "/listrecomendaciones — Listar\n"
+        "/verrec <n>\n"
+        "/modrec <n> — Edicion guiada (/cancelarmodlista)\n"
+        "/rmrec <num ...>\n\n"
+        "[Notas Nextcloud]\n"
+        "Requiere NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM en .env (nc_user + app_password).\n"
+        "/notas o /nt <titulo> [| contenido]\n"
+        "/listnotas o /lsnt — Lista (indice para ver/mod/rm)\n"
+        "/vernota o /vnt <n>\n"
+        "/modnota o /modnt <n> — Wizard; /cancelarmodnota\n"
+        "/rmnota o /rmnt <num ...>\n\n"
         "[Contabilidad / Facturas]\n"
         "/factura — Luego envia foto o PDF; sube a Nextcloud y fila en contabilidad.csv\n"
         "/cancelarfactura — Cancela espera de archivo tras /factura\n"
@@ -1810,11 +1891,14 @@ async def cmd_modtiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await _rechazar_no_autorizado(update)
         return
     args = list(context.args or [])
+    if len(args) == 1:
+        await _iniciar_mod_tiempo_wizard(update, context)
+        return
     if len(args) < 2:
         await update.message.reply_text(
-            "Uso: /modtiempo <num_tiempo> <fecha y hora fin>\n"
-            "Ejemplo: /modtiempo 3 20,03,2026 18:45\n"
-            "El numero es el de /listtiempo en este chat."
+            "Uso: /modtiempo <num_tiempo> — wizard (inicio/fin/proyecto), o\n"
+            "/modtiempo <num_tiempo> <fecha y hora fin> — solo corregir fin\n"
+            "Ejemplo rapido: /modtiempo 3 20,03,2026 18:45"
         )
         return
     if not args[0].isdigit():
@@ -3738,6 +3822,12 @@ def _entidad_mod_lista_por_id(kind: str, eid: str):
         return buscar_enlace_por_id(eid)
     if kind == "pendiente":
         return buscar_pendiente_por_id(eid)
+    if kind == "rec":
+        return buscar_recomendacion_por_id(eid)
+    if kind == "diario":
+        return buscar_diario_por_id(eid)
+    if kind == "huevo":
+        return buscar_huevo_por_id(eid)
     return None
 
 
@@ -3756,6 +3846,12 @@ def _guardar_entidad_mod_lista(kind: str, ent) -> bool:
         return actualizar_enlace(ent)
     if kind == "pendiente":
         return actualizar_pendiente(ent)
+    if kind == "rec":
+        return actualizar_recomendacion(ent)
+    if kind == "diario":
+        return actualizar_diario_entrada(ent)
+    if kind == "huevo":
+        return actualizar_huevo_registro(ent)
     return False
 
 
@@ -3932,6 +4028,33 @@ async def _manejar_wizard_mod_lista(
             err = "El texto no puede estar vacio."
         else:
             ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "rec":
+        if key in ("tipo", "nombre") and not val_raw:
+            err = "Tipo y nombre no pueden quedar vacios."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "diario":
+        if key == "resumen" and not val_raw:
+            err = "El resumen no puede estar vacio."
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "huevo":
+        if key == "cantidad":
+            try:
+                c = max(0, int(val_raw))
+            except ValueError:
+                err = "Cantidad invalida."
+            else:
+                ent1 = replace(ent0, cantidad=c)
+        elif key == "fecha":
+            try:
+                datetime.strptime(val_raw.strip(), "%Y-%m-%d")
+            except ValueError:
+                err = "Fecha invalida (YYYY-MM-DD)."
+            else:
+                ent1 = replace(ent0, fecha=val_raw.strip())
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
 
     if err:
         await update.message.reply_text(err)
@@ -3985,6 +4108,521 @@ async def cmd_modenlace(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_modpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _iniciar_mod_lista(update, context, "pendiente", "modpendiente")
+
+
+async def cmd_modrec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "rec", "modrec")
+
+
+async def cmd_moddiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "diario", "moddiario")
+
+
+async def cmd_modhuevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "huevo", "modhuevo")
+
+
+def _notas_credenciales(update: Update) -> tuple[str, str] | None:
+    u = update.effective_user
+    if not u:
+        return None
+    un = (u.username or "").strip().lstrip("@").lower()
+    return notes_nextcloud.credenciales_para_telegram_username(un, u.id)
+
+
+CAMPOS_MOD_TAREA: list[tuple[str, str]] = [
+    ("titulo", "Titulo"),
+    ("descripcion", "Descripcion"),
+    ("due", "Fecha vencimiento (YYYY-MM-DD; '-' quitar; . mantener)"),
+]
+
+
+def _texto_menu_mod_tarea() -> str:
+    lineas = ["Modificar tarea Deck. Campo (0 = salir):"]
+    for i, (_k, lab) in enumerate(CAMPOS_MOD_TAREA, 1):
+        lineas.append(f"{i}. {lab}")
+    return "\n".join(lineas)
+
+
+async def _iniciar_mod_tarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or not context.args[0].isdigit() or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modtarea <numero>\nEl numero es el de /listtareas en este chat."
+        )
+        return
+    n = int(context.args[0].strip())
+    cache = (context.chat_data or {}).get(CACHE_RM_TAREAS_DECK) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text("Indice invalido. Ejecuta /listtareas en este chat.")
+        return
+    item = cache[n - 1]
+    usr = update.effective_user
+    if not usr:
+        return
+    context.chat_data[WIZARD_MOD_TAREA_KEY] = {
+        "user_id": usr.id,
+        "board_id": int(item["board_id"]),
+        "stack_id": int(item["stack_id"]),
+        "card_id": int(item["card_id"]),
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_tarea() + "\n\n/cancelarmodtarea para salir."
+    )
+
+
+async def cmd_cancelarmodtarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_TAREA_KEY, None)
+    await update.message.reply_text("Edicion de tarea cancelada.")
+
+
+async def _manejar_wizard_mod_tarea(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    w = context.chat_data.get(WIZARD_MOD_TAREA_KEY)
+    if not w:
+        return False
+    user = update.effective_user
+    if not user or w.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        await update.message.reply_text("Envia texto o /cancelarmodtarea.")
+        return True
+    fase = w.get("fase", "menu")
+    bid, sid, cid = w["board_id"], w["stack_id"], w["card_id"]
+    cur = obtener_tarjeta_deck(bid, sid, cid)
+    if not cur:
+        context.chat_data.pop(WIZARD_MOD_TAREA_KEY, None)
+        await update.message.reply_text(
+            "Tarjeta no encontrada.\n" + (obtener_ultimo_error_deck() or "")
+        )
+        return True
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_TAREA_KEY, None)
+            await update.message.reply_text("Listo.")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Numero de campo o 0.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_TAREA):
+            await update.message.reply_text("Opcion invalida.")
+            return True
+        key, label = CAMPOS_MOD_TAREA[n - 1]
+        w["fase"] = "valor"
+        w["campo_key"] = key
+        await update.message.reply_text(
+            f"Nuevo valor: {label}\n(una linea; '-' vaciar donde aplique; . o = mantener)\n"
+            "/cancelarmodtarea para abortar."
+        )
+        return True
+
+    key = w.get("campo_key")
+    if not key:
+        w["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_tarea())
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        w["fase"] = "menu"
+        w.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios en ese campo.\n\n" + _texto_menu_mod_tarea()
+        )
+        return True
+
+    ok_up = False
+    if key == "titulo":
+        tit = "" if text in ("-", "—") else text
+        if not tit:
+            await update.message.reply_text("El titulo no puede quedar vacio.")
+            return True
+        ok_up = actualizar_tarjeta_deck(bid, sid, cid, titulo=tit)
+    elif key == "descripcion":
+        ok_up = actualizar_tarjeta_deck(
+            bid, sid, cid, descripcion="" if text in ("-", "—") else text
+        )
+    elif key == "due":
+        if text in ("-", "—"):
+            ok_up = actualizar_tarjeta_deck(bid, sid, cid, quitar_fecha=True)
+        else:
+            raw = text.strip()
+            try:
+                datetime.strptime(raw[:10], "%Y-%m-%d")
+            except ValueError:
+                await update.message.reply_text("Usa YYYY-MM-DD o '-' para quitar fecha.")
+                return True
+            ok_up = actualizar_tarjeta_deck(bid, sid, cid, fecha_due=raw[:10])
+
+    if not ok_up:
+        await update.message.reply_text(
+            "No se pudo actualizar.\n" + (obtener_ultimo_error_deck() or "")
+        )
+        return True
+
+    w["fase"] = "menu"
+    w.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_tarea()
+    )
+    return True
+
+
+CAMPOS_MOD_EVENTO: list[tuple[str, str]] = [
+    ("titulo", "Titulo"),
+    ("descripcion", "Descripcion"),
+    ("fecha", "Fecha inicio (YYYY-MM-DD)"),
+    ("hora", "Hora (HH:MM) o 'dia' para todo el dia"),
+    ("duracion", "Duracion (ej. durante 2 horas; . mantener)"),
+]
+
+
+def _texto_menu_mod_evento() -> str:
+    lineas = ["Modificar evento CalDAV. Campo (0 = salir):"]
+    for i, (_k, lab) in enumerate(CAMPOS_MOD_EVENTO, 1):
+        lineas.append(f"{i}. {lab}")
+    return "\n".join(lineas)
+
+
+async def _iniciar_mod_evento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or not context.args[0].isdigit() or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modevento <numero>\nEl numero es el de /listeventos en este chat."
+        )
+        return
+    n = int(context.args[0].strip())
+    cache = (context.chat_data or {}).get(CACHE_RM_EVENTOS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text("Indice invalido. Ejecuta /listeventos en este chat.")
+        return
+    url_ev = (cache[n - 1] or "").strip()
+    if not url_ev:
+        await update.message.reply_text("URL de evento vacia en la cache.")
+        return
+    usr = update.effective_user
+    if not usr:
+        return
+    context.chat_data[WIZARD_MOD_EVENTO_KEY] = {
+        "user_id": usr.id,
+        "event_url": url_ev,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_evento() + "\n\n/cancelarmodevento para salir."
+    )
+
+
+async def cmd_cancelarmodevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_EVENTO_KEY, None)
+    await update.message.reply_text("Edicion de evento cancelada.")
+
+
+async def cmd_modtarea(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_tarea(update, context)
+
+
+async def cmd_modevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_evento(update, context)
+
+
+async def _manejar_wizard_mod_evento(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    w = context.chat_data.get(WIZARD_MOD_EVENTO_KEY)
+    if not w:
+        return False
+    user = update.effective_user
+    if not user or w.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        await update.message.reply_text("Envia texto o /cancelarmodevento.")
+        return True
+    url_ev = (w.get("event_url") or "").strip()
+    fase = w.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_EVENTO_KEY, None)
+            await update.message.reply_text("Listo.")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Numero de campo o 0.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_EVENTO):
+            await update.message.reply_text("Opcion invalida.")
+            return True
+        _key, label = CAMPOS_MOD_EVENTO[n - 1]
+        w["fase"] = "valor"
+        w["campo_key"] = _key
+        await update.message.reply_text(
+            f"Nuevo valor: {label}\n(una linea; '-' vaciar descripcion; . mantener)\n"
+            "/cancelarmodevento para abortar."
+        )
+        return True
+
+    key = w.get("campo_key")
+    if not key:
+        w["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_evento())
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        w["fase"] = "menu"
+        w.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios.\n\n" + _texto_menu_mod_evento()
+        )
+        return True
+
+    ok = False
+    if key == "duracion":
+        du, _rest = _extraer_duracion_evento_y_resto(text)
+        if du is None:
+            await update.message.reply_text(
+                "No se entendio la duracion. Ej: durante 2 horas, durante 30 minutos."
+            )
+            return True
+        ok = actualizar_evento_por_url(url_ev, duracion=du)
+    elif key == "titulo":
+        tit = "" if text in ("-", "—") else text
+        if not tit:
+            await update.message.reply_text("El titulo no puede quedar vacio.")
+            return True
+        ok = actualizar_evento_por_url(url_ev, titulo=tit)
+    elif key == "descripcion":
+        ok = actualizar_evento_por_url(
+            url_ev, descripcion="" if text in ("-", "—") else text
+        )
+    elif key == "fecha":
+        try:
+            datetime.strptime(text.strip()[:10], "%Y-%m-%d")
+        except ValueError:
+            await update.message.reply_text("Usa YYYY-MM-DD.")
+            return True
+        ok = actualizar_evento_por_url(url_ev, fecha_yyyy_mm_dd=text.strip()[:10])
+    elif key == "hora":
+        tstrip = text.strip().lower()
+        if tstrip in ("dia", "día", "todoeldia", "dia_completo"):
+            ok = actualizar_evento_por_url(url_ev, todo_el_dia=True)
+        else:
+            try:
+                datetime.strptime(text.strip(), "%H:%M")
+            except ValueError:
+                await update.message.reply_text("Usa HH:MM o la palabra 'dia' (todo el dia).")
+                return True
+            ok = actualizar_evento_por_url(url_ev, hora_hhmm=text.strip())
+
+    if not ok:
+        await update.message.reply_text(
+            "No se pudo actualizar el evento.\n" + (obtener_ultimo_error_evento() or "")
+        )
+        return True
+
+    w["fase"] = "menu"
+    w.pop("campo_key", None)
+    await update.message.reply_text("Campo actualizado.\n\n" + _texto_menu_mod_evento())
+    return True
+
+
+CAMPOS_MOD_TIEMPO: list[tuple[str, str]] = [
+    ("proyecto", "Proyecto (numero de /listproyectos en este chat)"),
+    ("inicio", "Fecha y hora inicio (texto flexible, ver /modtiempo)"),
+    ("fin", "Fecha y hora fin (solo registros cerrados; editable)"),
+]
+
+
+def _texto_menu_mod_tiempo() -> str:
+    lineas = ["Modificar tiempo (CSV). Campo (0 = salir):"]
+    for i, (_k, lab) in enumerate(CAMPOS_MOD_TIEMPO, 1):
+        lineas.append(f"{i}. {lab}")
+    return "\n".join(lineas)
+
+
+async def _iniciar_mod_tiempo_wizard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args or not context.args[0].isdigit() or context.chat_data is None:
+        await update.message.reply_text(
+            "Uso: /modtiempo <numero>\nSin fecha/hora: abre wizard. "
+            "Con argumentos extra: mismo uso rapido que antes."
+        )
+        return
+    n = int(context.args[0].strip())
+    cache = (context.chat_data or {}).get(CACHE_RM_TIEMPOS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text("Indice invalido. Ejecuta /listtiempo en este chat.")
+        return
+    tid = cache[n - 1]
+    t = buscar_tiempo_por_id(tid)
+    if not t:
+        await update.message.reply_text("Registro no encontrado.")
+        return
+    usr = update.effective_user
+    if not usr:
+        return
+    context.chat_data[WIZARD_MOD_TIEMPO_KEY] = {
+        "user_id": usr.id,
+        "tiempo_id": t.id,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_tiempo() + "\n\n/cancelarmodtiempo para salir."
+    )
+
+
+async def cmd_cancelarmodtiempo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_TIEMPO_KEY, None)
+    await update.message.reply_text("Edicion de tiempo cancelada.")
+
+
+async def _manejar_wizard_mod_tiempo(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    w = context.chat_data.get(WIZARD_MOD_TIEMPO_KEY)
+    if not w:
+        return False
+    user = update.effective_user
+    if not user or w.get("user_id") != user.id:
+        return False
+    text = (update.message.text or "").strip()
+    if not text:
+        await update.message.reply_text("Envia texto o /cancelarmodtiempo.")
+        return True
+    tid = w.get("tiempo_id")
+    t = buscar_tiempo_por_id(tid) if tid else None
+    if not t:
+        context.chat_data.pop(WIZARD_MOD_TIEMPO_KEY, None)
+        await update.message.reply_text("Registro de tiempo ya no existe.")
+        return True
+    fase = w.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_TIEMPO_KEY, None)
+            await update.message.reply_text("Listo.")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Numero de campo o 0.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_TIEMPO):
+            await update.message.reply_text("Opcion invalida.")
+            return True
+        _key, label = CAMPOS_MOD_TIEMPO[n - 1]
+        w["fase"] = "valor"
+        w["campo_key"] = _key
+        await update.message.reply_text(
+            f"Nuevo valor: {label}\n/cancelarmodtiempo para abortar."
+        )
+        return True
+
+    key = w.get("campo_key")
+    if not key:
+        w["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_tiempo())
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        w["fase"] = "menu"
+        w.pop("campo_key", None)
+        await update.message.reply_text(
+            "Sin cambios.\n\n" + _texto_menu_mod_tiempo()
+        )
+        return True
+
+    t2 = replace(t)
+    if key == "proyecto":
+        if not text.isdigit():
+            await update.message.reply_text("Indice numerico de /listproyectos.")
+            return True
+        n = int(text)
+        pc = (context.chat_data or {}).get(CACHE_RM_PROYECTOS) or []
+        if n < 1 or n > len(pc):
+            await update.message.reply_text("Ejecuta /listproyectos en este chat antes.")
+            return True
+        old_pid = t.id_proyecto
+        t2 = replace(t2, id_proyecto=pc[n - 1])
+        if not actualizar_tiempo(t2):
+            await update.message.reply_text("No se pudo guardar.")
+            return True
+        sincronizar_tiempo_total_proyecto(old_pid)
+        sincronizar_tiempo_total_proyecto(t2.id_proyecto)
+    elif key == "inicio":
+        ini = parsear_fecha_hora(text)
+        if ini is None:
+            await update.message.reply_text("Fecha/hora inicio no reconocida.")
+            return True
+        t2 = replace(t2, fecha_hora_inicio=formatear_fecha_hora(ini))
+        fin_d = parsear_fecha_hora(t2.fecha_hora_fin)
+        if fin_d and fin_d >= ini:
+            t2 = replace(
+                t2,
+                cantidad_tiempo=str(minutos_entre(ini, fin_d)),
+            )
+        if not actualizar_tiempo(t2):
+            await update.message.reply_text("No se pudo guardar.")
+            return True
+        sincronizar_tiempo_total_proyecto(t2.id_proyecto)
+    elif key == "fin":
+        if es_activo(t):
+            await update.message.reply_text(
+                "Este tiempo sigue activo (sin fin). Usa /tiempofin o /modtiempo n <fecha fin>."
+            )
+            return True
+        fin = parsear_fecha_hora(text)
+        if fin is None:
+            await update.message.reply_text("Fecha/hora fin no reconocida.")
+            return True
+        ini = parsear_fecha_hora(t2.fecha_hora_inicio)
+        if ini is None or fin < ini:
+            await update.message.reply_text("Fin invalida respecto al inicio.")
+            return True
+        t2 = replace(
+            t2,
+            fecha_hora_fin=formatear_fecha_hora(fin),
+            cantidad_tiempo=str(minutos_entre(ini, fin)),
+        )
+        if not actualizar_tiempo(t2):
+            await update.message.reply_text("No se pudo guardar.")
+            return True
+        sincronizar_tiempo_total_proyecto(t2.id_proyecto)
+
+    w["fase"] = "menu"
+    w.pop("campo_key", None)
+    await update.message.reply_text(
+        "Campo actualizado.\n\n" + _texto_menu_mod_tiempo()
+    )
+    return True
 
 
 async def cmd_rmevento(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4386,7 +5024,10 @@ async def cmd_diario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await _rechazar_no_autorizado(update)
         return
     if not context.args:
-        await update.message.reply_text("Uso: /diario <texto>\nGuarda una entrada en el diario del dia (y en diario.csv).")
+        await update.message.reply_text(
+            "Uso: /diario <texto>\n"
+            "Al final puedes poner 'para el <fecha>' para guardar en un dia concreto (ej. para el 15-03-2026)."
+        )
         return
     texto = " ".join(context.args).strip()
     if not texto:
@@ -4394,14 +5035,557 @@ async def cmd_diario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     usr = update.effective_user
     etiqueta = (usr.username or str(usr.id)) if usr else ""
+    cuerpo, fecha_dia = extraer_cuerpo_y_fecha_dia_para_el(texto)
+    if not cuerpo.strip():
+        await update.message.reply_text("El texto del diario no puede estar vacio (sin contar la fecha).")
+        return
     try:
-        ent = diario_añadir_entrada(texto, fuente="telegram_texto", telegram_user=etiqueta)
+        ent = diario_añadir_entrada(
+            cuerpo.strip(),
+            fuente="telegram_texto",
+            telegram_user=etiqueta,
+            fecha_dia=fecha_dia,
+        )
     except ValueError:
         await update.message.reply_text("El texto del diario no puede estar vacio.")
         return
     await update.message.reply_text(
         f"Entrada de diario guardada.\nDia: {ent.fecha_dia}\nArchivo: {ent.ruta}"
     )
+
+
+async def cmd_listdiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    lim = 25
+    if context.args and context.args[0].strip().isdigit():
+        lim = max(1, min(100, int(context.args[0].strip())))
+    items = listar_diario_recientes(lim)
+    if not items:
+        await update.message.reply_text("No hay entradas en diario.csv.")
+        return
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_DIARIO_IDS] = [e.id for e in items]
+    lineas = []
+    for i, e in enumerate(items, 1):
+        rs = (e.resumen or "").strip() or "(vacio)"
+        if len(rs) > 72:
+            rs = rs[:69] + "..."
+        lineas.append(f"{i}. [{e.fecha_dia}] {rs}")
+    await update.message.reply_text(
+        f"Diario ({len(items)} ultimas):\n\n" + "\n".join(lineas)
+    )
+
+
+async def cmd_verdiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /verdiario <numero>\nEl de /listdiario en este chat.")
+        return
+    arg = context.args[0].strip()
+    ent = None
+    if arg.isdigit():
+        cache = (context.chat_data or {}).get(CACHE_RM_DIARIO_IDS) or []
+        n = int(arg)
+        if 1 <= n <= len(cache):
+            ent = buscar_diario_por_id(cache[n - 1])
+    if ent is None:
+        ent = buscar_diario_por_id(arg)
+    if not ent:
+        await update.message.reply_text("No encontrado. Usa /listdiario.")
+        return
+    body = (
+        f"ID: {ent.id}\n"
+        f"Dia: {ent.fecha_dia}\n"
+        f"Ingesta: {formatear_fecha_ver(ent.fecha_ingesta)}\n"
+        f"Fuente: {ent.fuente}\n"
+        f"Usuario: {ent.telegram_user or '(n/d)'}\n\n"
+        f"Resumen:\n{ent.resumen or '(vacio)'}"
+    )
+    await _reply_texto_largo(update, body)
+
+
+async def cmd_rmdiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /rmdiario <numero ...>\nIndices de /listdiario.")
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_DIARIO_IDS) or []
+    ok = 0
+    fuera: list[int] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if eliminar_diario_por_id(cache[n - 1]):
+            ok += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_DIARIO_IDS, None)
+    msg = f"Entradas eliminadas del indice diario: {ok}."
+    if fuera:
+        msg += f" Fuera de rango: {sorted(set(fuera))}."
+    await update.message.reply_text(msg)
+
+
+async def cmd_rec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if len(context.args) < 2:
+        await update.message.reply_text(
+            "Uso: /rec <tipo> <nombre> [notas...]\n"
+            "Ej: /rec escritor Ursula K. Le Guin ciencia ficcion"
+        )
+        return
+    tipo = context.args[0].strip()
+    nombre = context.args[1].strip()
+    notas = " ".join(context.args[2:]).strip() if len(context.args) > 2 else ""
+    usr = update.effective_user
+    etiqueta = (usr.username or str(usr.id)) if usr else ""
+    try:
+        r = añadir_recomendacion(
+            tipo=tipo,
+            nombre=nombre,
+            notas=notas,
+            fuente="telegram",
+            telegram_user=etiqueta,
+        )
+    except ValueError as e:
+        await update.message.reply_text(str(e))
+        return
+    await update.message.reply_text(
+        f"Recomendacion guardada.\nID: {r.id}\n{r.tipo}: {r.nombre}"
+    )
+
+
+async def cmd_listrecomendaciones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    items = listar_recomendaciones_recientes(80)
+    if not items:
+        await update.message.reply_text("No hay recomendaciones.")
+        return
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_REC_IDS] = [x.id for x in items]
+    lineas = []
+    for i, x in enumerate(items, 1):
+        nom = (x.nombre or "")[:50]
+        lineas.append(f"{i}. [{x.tipo}] {nom}")
+    await update.message.reply_text(
+        f"Recomendaciones ({len(items)}):\n\n" + "\n".join(lineas)
+    )
+
+
+async def cmd_verrec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /verrec <numero>\nEl de /listrecomendaciones.")
+        return
+    arg = context.args[0].strip()
+    r = None
+    if arg.isdigit():
+        cache = (context.chat_data or {}).get(CACHE_RM_REC_IDS) or []
+        n = int(arg)
+        if 1 <= n <= len(cache):
+            r = buscar_recomendacion_por_id(cache[n - 1])
+    if r is None:
+        r = buscar_recomendacion_por_id(arg)
+    if not r:
+        await update.message.reply_text("No encontrado.")
+        return
+    body = (
+        f"ID: {r.id}\n"
+        f"Tipo: {r.tipo}\n"
+        f"Nombre: {r.nombre}\n"
+        f"Notas: {r.notas or '(vacias)'}\n"
+        f"Tags: {r.tags or '(ninguno)'}\n"
+        f"Fecha: {formatear_fecha_ver(r.fecha_ingesta)}\n"
+        f"Fuente: {r.fuente} @{r.telegram_user or ''}"
+    )
+    await _reply_texto_largo(update, body)
+
+
+async def cmd_rmrec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /rmrec <numero ...>")
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_REC_IDS) or []
+    ok = 0
+    fuera: list[int] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if eliminar_recomendacion_por_id(cache[n - 1]):
+            ok += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_REC_IDS, None)
+    msg = f"Recomendaciones eliminadas: {ok}."
+    if fuera:
+        msg += f" Fuera de rango: {sorted(set(fuera))}."
+    await update.message.reply_text(msg)
+
+
+async def cmd_listregistroshuevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    lim = 40
+    if context.args and context.args[0].strip().isdigit():
+        lim = max(1, min(100, int(context.args[0].strip())))
+    items = listar_registros_recientes(lim)
+    if not items:
+        await update.message.reply_text("No hay registros de huevos.")
+        return
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_HUEVO_IDS] = [r.id for r in items]
+    lineas = []
+    for i, r in enumerate(items, 1):
+        lineas.append(f"{i}. {r.fecha} | {r.cantidad} u. | {r.fuente}")
+    await update.message.reply_text(
+        f"Registros huevos ({len(items)}):\n\n" + "\n".join(lineas)
+    )
+
+
+async def cmd_verhuevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /verhuevo <numero> (de /listregistroshuevos).")
+        return
+    arg = context.args[0].strip()
+    r = None
+    if arg.isdigit():
+        cache = (context.chat_data or {}).get(CACHE_RM_HUEVO_IDS) or []
+        n = int(arg)
+        if 1 <= n <= len(cache):
+            r = buscar_huevo_por_id(cache[n - 1])
+    if r is None:
+        r = buscar_huevo_por_id(arg)
+    if not r:
+        await update.message.reply_text("No encontrado.")
+        return
+    await update.message.reply_text(
+        f"ID: {r.id}\nFecha: {r.fecha}\nCantidad: {r.cantidad}\n"
+        f"Ingesta: {formatear_fecha_ver(r.fecha_ingesta)}\nFuente: {r.fuente}"
+    )
+
+
+async def cmd_rmhuevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /rmhuevo <numero ...>")
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_HUEVO_IDS) or []
+    ok = 0
+    fuera: list[int] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if eliminar_huevo_por_id(cache[n - 1]):
+            ok += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_HUEVO_IDS, None)
+    msg = f"Registros huevos eliminados: {ok}."
+    if fuera:
+        msg += f" Fuera de rango: {sorted(set(fuera))}."
+    await update.message.reply_text(msg)
+
+
+CAMPOS_MOD_NOTA: list[tuple[str, str]] = [
+    ("title", "Titulo"),
+    ("content", "Contenido (texto de la nota)"),
+]
+
+
+def _texto_menu_mod_nota() -> str:
+    lineas = ["Modificar nota Nextcloud. Campo (0 = salir):"]
+    for i, (_k, lab) in enumerate(CAMPOS_MOD_NOTA, 1):
+        lineas.append(f"{i}. {lab}")
+    return "\n".join(lineas)
+
+
+async def cmd_cancelarmodnota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_MOD_NOTA_KEY, None)
+    await update.message.reply_text("Edicion de nota cancelada.")
+
+
+async def _iniciar_mod_nota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    cred = _notas_credenciales(update)
+    if not cred:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return
+    if not context.args or not context.args[0].isdigit() or context.chat_data is None:
+        await update.message.reply_text("Uso: /modnota <numero>\nEl de /listnotas.")
+        return
+    n = int(context.args[0].strip())
+    cache = (context.chat_data or {}).get(CACHE_RM_NOTAS_IDS) or []
+    if n < 1 or n > len(cache):
+        await update.message.reply_text("Indice invalido. Ejecuta /listnotas.")
+        return
+    nid = int(cache[n - 1])
+    usr = update.effective_user
+    if not usr:
+        return
+    context.chat_data[WIZARD_MOD_NOTA_KEY] = {
+        "user_id": usr.id,
+        "note_id": nid,
+        "fase": "menu",
+    }
+    await update.message.reply_text(
+        _texto_menu_mod_nota() + "\n\n/cancelarmodnota para salir."
+    )
+
+
+async def _manejar_wizard_mod_nota(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> bool:
+    if context.chat_data is None:
+        return False
+    w = context.chat_data.get(WIZARD_MOD_NOTA_KEY)
+    if not w:
+        return False
+    user = update.effective_user
+    if not user or w.get("user_id") != user.id:
+        return False
+    cred = _notas_credenciales(update)
+    if not cred:
+        context.chat_data.pop(WIZARD_MOD_NOTA_KEY, None)
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return True
+    nu, pw = cred
+    text = (update.message.text or "").strip()
+    if not text:
+        await update.message.reply_text("Envia texto o /cancelarmodnota.")
+        return True
+    nid = int(w["note_id"])
+    fase = w.get("fase", "menu")
+
+    if fase == "menu":
+        if text == "0":
+            context.chat_data.pop(WIZARD_MOD_NOTA_KEY, None)
+            await update.message.reply_text("Listo.")
+            return True
+        if not text.isdigit():
+            await update.message.reply_text("Numero o 0.")
+            return True
+        n = int(text)
+        if n < 1 or n > len(CAMPOS_MOD_NOTA):
+            await update.message.reply_text("Opcion invalida.")
+            return True
+        key, label = CAMPOS_MOD_NOTA[n - 1]
+        w["fase"] = "valor"
+        w["campo_key"] = key
+        await update.message.reply_text(
+            f"Nuevo valor: {label}\n/cancelarmodnota para abortar."
+        )
+        return True
+
+    key = w.get("campo_key")
+    if not key:
+        w["fase"] = "menu"
+        await update.message.reply_text(_texto_menu_mod_nota())
+        return True
+
+    if _es_mantener_wizard_valor(text):
+        w["fase"] = "menu"
+        w.pop("campo_key", None)
+        await update.message.reply_text(_texto_menu_mod_nota())
+        return True
+
+    if key == "title":
+        out = notes_nextcloud.actualizar_nota(nu, pw, nid, titulo=text)
+    else:
+        out = notes_nextcloud.actualizar_nota(nu, pw, nid, contenido=text)
+    if not out:
+        await update.message.reply_text(
+            "Error: " + (notes_nextcloud.obtener_ultimo_error() or "?")
+        )
+        return True
+    w["fase"] = "menu"
+    w.pop("campo_key", None)
+    await update.message.reply_text("Actualizado.\n\n" + _texto_menu_mod_nota())
+    return True
+
+
+async def cmd_notas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    cred = _notas_credenciales(update)
+    if not cred:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return
+    nu, pw = cred
+    resto = " ".join(context.args or []).strip()
+    if not resto:
+        await update.message.reply_text(
+            "Uso: /notas <titulo> [| cuerpo opcional]\n"
+            "O: /notas titulo | primer parrafo"
+        )
+        return
+    titulo, _, body = resto.partition("|")
+    titulo = titulo.strip() or "(sin titulo)"
+    body = body.strip()
+    created = notes_nextcloud.crear_nota(nu, pw, titulo, body)
+    if not created:
+        await update.message.reply_text(
+            "No se pudo crear: " + (notes_nextcloud.obtener_ultimo_error() or "")
+        )
+        return
+    await update.message.reply_text(
+        f"Nota creada en Nextcloud.\nID: {created.get('id')}\nTitulo: {created.get('title')}"
+    )
+
+
+async def cmd_listnotas(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    cred = _notas_credenciales(update)
+    if not cred:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return
+    nu, pw = cred
+    notas = notes_nextcloud.listar_notas(nu, pw)
+    if notas is None:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error() or "Error listando.")
+        return
+    if not notas:
+        await update.message.reply_text("No hay notas (o carpeta vacia).")
+        return
+    def _mod_key(x: dict) -> int:
+        try:
+            return int(float(x.get("modified") or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    notas.sort(key=_mod_key, reverse=True)
+    ids: list[int] = []
+    lineas: list[str] = []
+    idx = 0
+    for n in notas[:80]:
+        nid = n.get("id")
+        if nid is None:
+            continue
+        try:
+            nid_i = int(nid)
+        except (TypeError, ValueError):
+            continue
+        idx += 1
+        ids.append(nid_i)
+        tit = str(n.get("title") or "(sin titulo)")[:55]
+        lineas.append(f"{idx}. [{nid_i}] {tit}")
+        if idx >= 60:
+            break
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_NOTAS_IDS] = ids
+    await update.message.reply_text(
+        f"Notas Nextcloud ({len(lineas)}):\n\n" + "\n".join(lineas)
+    )
+
+
+async def cmd_vernota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    cred = _notas_credenciales(update)
+    if not cred:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return
+    nu, pw = cred
+    if not context.args:
+        await update.message.reply_text("Uso: /vernota <numero>\nEl de /listnotas.")
+        return
+    arg = context.args[0].strip()
+    nid = None
+    if arg.isdigit():
+        cache = (context.chat_data or {}).get(CACHE_RM_NOTAS_IDS) or []
+        n = int(arg)
+        if 1 <= n <= len(cache):
+            nid = int(cache[n - 1])
+    if nid is None:
+        try:
+            nid = int(arg)
+        except ValueError:
+            nid = None
+    if nid is None:
+        await update.message.reply_text("Indice o id invalido.")
+        return
+    note = notes_nextcloud.obtener_nota(nu, pw, nid)
+    if not note:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error() or "No encontrada.")
+        return
+    body = f"ID: {note.get('id')}\nTitulo: {note.get('title')}\n\n{note.get('content') or ''}"
+    await _reply_texto_largo(update, body)
+
+
+async def cmd_modnota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_nota(update, context)
+
+
+async def cmd_rmnota(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    cred = _notas_credenciales(update)
+    if not cred:
+        await update.message.reply_text(notes_nextcloud.obtener_ultimo_error())
+        return
+    nu, pw = cred
+    if not context.args:
+        await update.message.reply_text("Uso: /rmnota <numero ...>\nIndices de /listnotas.")
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_NOTAS_IDS) or []
+    ok = 0
+    fuera: list[int] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        if notes_nextcloud.borrar_nota(nu, pw, int(cache[n - 1])):
+            ok += 1
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_NOTAS_IDS, None)
+    msg = f"Notas eliminadas: {ok}."
+    if fuera:
+        msg += f" Fuera de rango: {sorted(set(fuera))}."
+    await update.message.reply_text(msg)
 
 
 async def cmd_listpendientes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4623,9 +5807,16 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif tipo == "diario":
         usr = update.effective_user
         etiqueta = (usr.username or str(usr.id)) if usr else ""
+        cuerpo, fecha_dia = extraer_cuerpo_y_fecha_dia_para_el(combo)
+        if not (cuerpo or "").strip():
+            await update.message.reply_text("Texto del diario vacio.")
+            return
         try:
             ent = diario_añadir_entrada(
-                combo, fuente="telegram_mvpendiente", telegram_user=etiqueta
+                cuerpo.strip(),
+                fuente="telegram_mvpendiente",
+                telegram_user=etiqueta,
+                fecha_dia=fecha_dia,
             )
         except ValueError:
             await update.message.reply_text("Texto del diario vacio.")
@@ -5299,6 +6490,14 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if await _manejar_wizard_mod_factura(update, context):
         return
+    if await _manejar_wizard_mod_tarea(update, context):
+        return
+    if await _manejar_wizard_mod_evento(update, context):
+        return
+    if await _manejar_wizard_mod_tiempo(update, context):
+        return
+    if await _manejar_wizard_mod_nota(update, context):
+        return
     if await _manejar_wizard_mod_lista(update, context):
         return
     if await _manejar_wizard_mod_fabrica(update, context):
@@ -5604,11 +6803,16 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 return
             usr = update.effective_user
             etiqueta_u = (usr.username or str(usr.id)) if usr else ""
+            cuerpo_d, fecha_d = extraer_cuerpo_y_fecha_dia_para_el(contenido.strip())
+            if not cuerpo_d.strip():
+                await estado.edit_text("El texto del diario no puede estar vacio.")
+                return
             try:
                 ent = diario_añadir_entrada(
-                    contenido.strip(),
+                    cuerpo_d.strip(),
                     fuente="telegram_audio",
                     telegram_user=etiqueta_u,
+                    fecha_dia=fecha_d,
                 )
             except ValueError:
                 await estado.edit_text("El texto del diario no puede estar vacio.")
@@ -5697,7 +6901,32 @@ def main() -> None:
     app.add_handler(CommandHandler("modinv", cmd_modinv))
     app.add_handler(CommandHandler("modenlace", cmd_modenlace))
     app.add_handler(CommandHandler("modpendiente", cmd_modpendiente))
+    app.add_handler(CommandHandler("modrec", cmd_modrec))
+    app.add_handler(CommandHandler("moddiario", cmd_moddiario))
+    app.add_handler(CommandHandler("modhuevo", cmd_modhuevo))
     app.add_handler(CommandHandler("cancelarmodlista", cmd_cancelarmodlista))
+    app.add_handler(CommandHandler("modtarea", cmd_modtarea))
+    app.add_handler(CommandHandler("cancelarmodtarea", cmd_cancelarmodtarea))
+    app.add_handler(CommandHandler("modevento", cmd_modevento))
+    app.add_handler(CommandHandler("cancelarmodevento", cmd_cancelarmodevento))
+    app.add_handler(CommandHandler("cancelarmodtiempo", cmd_cancelarmodtiempo))
+    app.add_handler(CommandHandler("notas", cmd_notas))
+    app.add_handler(CommandHandler("listnotas", cmd_listnotas))
+    app.add_handler(CommandHandler("vernota", cmd_vernota))
+    app.add_handler(CommandHandler("modnota", cmd_modnota))
+    app.add_handler(CommandHandler("rmnota", cmd_rmnota))
+    app.add_handler(CommandHandler("cancelarmodnota", cmd_cancelarmodnota))
+    app.add_handler(CommandHandler("rec", cmd_rec))
+    app.add_handler(CommandHandler("recomendacion", cmd_rec))
+    app.add_handler(CommandHandler("listrecomendaciones", cmd_listrecomendaciones))
+    app.add_handler(CommandHandler("verrec", cmd_verrec))
+    app.add_handler(CommandHandler("rmrec", cmd_rmrec))
+    app.add_handler(CommandHandler("listdiario", cmd_listdiario))
+    app.add_handler(CommandHandler("verdiario", cmd_verdiario))
+    app.add_handler(CommandHandler("rmdiario", cmd_rmdiario))
+    app.add_handler(CommandHandler("listregistroshuevos", cmd_listregistroshuevos))
+    app.add_handler(CommandHandler("verhuevo", cmd_verhuevo))
+    app.add_handler(CommandHandler("rmhuevo", cmd_rmhuevo))
     app.add_handler(CommandHandler("tiempo", cmd_tiempo))
     app.add_handler(CommandHandler("tiempofin", cmd_tiempofin))
     app.add_handler(CommandHandler("listtiempo", cmd_listtiempo))
@@ -5791,9 +7020,11 @@ def main() -> None:
         ("rminvestigaciones", cmd_rminvestigacion),
         ("lsfunc", cmd_listfunc),
         ("lsfn", cmd_listfunc),
+        ("fn", cmd_func),
         ("vfunc", cmd_verfunc),
         ("vfn", cmd_verfunc),
         ("rmfn", cmd_rmfunc),
+        ("modfn", cmd_modfunc),
         ("rmfuncionalidades", cmd_rmfunc),
         ("lsfab", cmd_listfab),
         ("vfab", cmd_verfab),
@@ -5804,12 +7035,35 @@ def main() -> None:
         ("vev", cmd_verevento),
         ("rmev", cmd_rmevento),
         ("rmeventos", cmd_rmevento),
+        ("modev", cmd_modevento),
+        ("msev", cmd_modevento),
         ("lstareas", cmd_listtareas),
         ("lst", cmd_listtareas),
+        ("lstr", cmd_listtareas),
+        ("lscomprar", cmd_listtareas),
+        ("tr", cmd_tarea),
         ("vtarea", cmd_vertarea),
         ("vt", cmd_vertarea),
+        ("vtr", cmd_vertarea),
         ("rmt", cmd_rmtarea),
         ("rmtareas", cmd_rmtarea),
+        ("rmtr", cmd_rmtarea),
+        ("mtr", cmd_modtarea),
+        ("lsrec", cmd_listrecomendaciones),
+        ("vrec", cmd_verrec),
+        ("modrec", cmd_modrec),
+        ("lsdiario", cmd_listdiario),
+        ("vdiario", cmd_verdiario),
+        ("lshuevos", cmd_listhuevos),
+        ("lshv", cmd_listhuevos),
+        ("lshue", cmd_listregistroshuevos),
+        ("vhuevo", cmd_verhuevo),
+        ("vhv", cmd_verhuevo),
+        ("nt", cmd_notas),
+        ("lsnt", cmd_listnotas),
+        ("vnt", cmd_vernota),
+        ("modnt", cmd_modnota),
+        ("rmnt", cmd_rmnota),
         ("lspendientes", cmd_listpendientes),
         ("lspen", cmd_listpendientes),
         ("vpendiente", cmd_verpendiente),

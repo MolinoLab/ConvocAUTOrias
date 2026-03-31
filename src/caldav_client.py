@@ -935,6 +935,194 @@ def formatear_detalle_evento_por_url(resource_url: str) -> str:
     return ""
 
 
+def _http_cal_auth():
+    try:
+        import requests
+        from requests.auth import HTTPBasicAuth
+
+        return requests, HTTPBasicAuth(config.CALDAV_USER, config.CALDAV_PASS)
+    except ImportError:
+        return None, None
+
+
+def _cargar_ical_y_etag(resource_url: str) -> tuple[Calendar | None, str | None, str]:
+    """GET del recurso .ics: (Calendar parseado, etag o None, error)."""
+    rs, auth = _http_cal_auth()
+    if not rs or not auth or not resource_url.strip():
+        return None, None, "requests o URL invalida"
+    if not all([config.CALDAV_URL, config.CALDAV_USER, config.CALDAV_PASS]):
+        return None, None, "CalDAV incompleto"
+    try:
+        r = rs.get(
+            resource_url.strip(),
+            auth=auth,
+            headers={"Accept": "text/calendar, application/calendar+json"},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            return None, None, f"GET {r.status_code}"
+        etag = r.headers.get("ETag") or r.headers.get("etag") or ""
+        raw = r.content
+        cal = Calendar.from_ical(raw)
+        return cal, (etag.strip() if etag else None), ""
+    except Exception as exc:
+        return None, None, str(exc)[:200]
+
+
+def _put_ical_evento(resource_url: str, cal: Calendar, etag: str | None) -> str:
+    rs, auth = _http_cal_auth()
+    if not rs or not auth:
+        return "requests no disponible"
+    ical_raw = cal.to_ical()
+    payload = ical_raw.encode("utf-8") if isinstance(ical_raw, str) else ical_raw
+    headers: dict[str, str] = {"Content-Type": "text/calendar; charset=utf-8"}
+    if etag:
+        e = etag.strip()
+        if not (e.startswith('"') or e.startswith("W/")):
+            e = f'"{e}"'
+        headers["If-Match"] = e
+    try:
+        r = rs.put(
+            resource_url.strip(),
+            data=payload,
+            auth=auth,
+            headers=headers,
+            timeout=30,
+        )
+        if r.status_code in (200, 201, 204):
+            return ""
+        return f"PUT {r.status_code}: {(r.text or '')[:160]}"
+    except Exception as exc:
+        return str(exc)[:200]
+
+
+def _vevent_first(cal: Calendar):
+    for comp in cal.walk():
+        if comp.name == "VEVENT":
+            return comp
+    return None
+
+
+def _quitar_dtend_y_duration(vevent) -> None:
+    for key in ("dtend", "duration"):
+        if key in vevent:
+            del vevent[key]
+
+
+def actualizar_evento_por_url(
+    resource_url: str,
+    *,
+    titulo: str | None = None,
+    descripcion: str | None = None,
+    fecha_yyyy_mm_dd: str | None = None,
+    hora_hhmm: str | None = None,
+    todo_el_dia: bool | None = None,
+    duracion: timedelta | None = None,
+) -> bool:
+    """
+    Actualiza el primer VEVENT en resource_url (GET + PUT con If-Match).
+    None en un argumento = no cambiar ese aspecto.
+    todo_el_dia=True fuerza evento de dia completo (9:00-23:59 local como en crear_evento).
+    hora_hhmm: HH:MM; solo aplica con fecha_yyyy_mm_dd o si ya era evento con hora.
+    duracion: si hay hora concreta; None deja duracion anterior o 1 h por defecto al cambiar hora.
+    """
+    _set_last_evento_error("")
+    u = (resource_url or "").strip()
+    if not u:
+        _set_last_evento_error("URL vacia")
+        return False
+    if not Calendar:
+        _set_last_evento_error("icalendar no disponible")
+        return False
+
+    cal0, etag, err = _cargar_ical_y_etag(u)
+    if cal0 is None:
+        _set_last_evento_error(err or "no se pudo leer el evento")
+        return False
+
+    vevent = _vevent_first(cal0)
+    if vevent is None:
+        _set_last_evento_error("No hay VEVENT")
+        return False
+
+    if titulo is not None:
+        vevent["summary"] = titulo[:255]
+    if descripcion is not None:
+        if descripcion.strip():
+            vevent["description"] = descripcion
+        elif "description" in vevent:
+            del vevent["description"]
+
+    want_time_change = (
+        fecha_yyyy_mm_dd is not None
+        or hora_hhmm is not None
+        or todo_el_dia is not None
+        or duracion is not None
+    )
+    if not want_time_change:
+        body_err = _put_ical_evento(u, cal0, etag)
+        if body_err:
+            _set_last_evento_error(body_err)
+            return False
+        return True
+
+    st_cur = _vevent_start_local_naive(vevent)
+    fecha_base = (fecha_yyyy_mm_dd or "").strip()
+    if not fecha_base and st_cur:
+        fecha_base = st_cur.strftime("%Y-%m-%d")
+    if not fecha_base:
+        _set_last_evento_error("Fecha de inicio desconocida; indica YYYY-MM-DD")
+        return False
+    try:
+        d_only = datetime.strptime(fecha_base[:10], "%Y-%m-%d").date()
+    except ValueError:
+        _set_last_evento_error("fecha_yyyy_mm_dd invalida")
+        return False
+
+    all_day = bool(todo_el_dia)
+    h_in = (hora_hhmm or "").strip() if hora_hhmm is not None else None
+
+    if not all_day and h_in is None and st_cur and (st_cur.hour, st_cur.minute) != (0, 0):
+        h_str = st_cur.strftime("%H:%M")
+        datetime.strptime(h_str, "%H:%M")
+        d0 = datetime.combine(d_only, time(st_cur.hour, st_cur.minute, 0))
+    elif not all_day and h_in:
+        datetime.strptime(h_in, "%H:%M")
+        hparts = h_in.split(":")
+        d0 = datetime.combine(d_only, time(int(hparts[0]), int(hparts[1]), 0))
+    elif not all_day and st_cur is None:
+        d0 = datetime.combine(d_only, time(9, 0, 0))
+    elif not all_day and st_cur:
+        d0 = datetime.combine(d_only, time(st_cur.hour, st_cur.minute, 0))
+    else:
+        d0 = None
+
+    _quitar_dtend_y_duration(vevent)
+    if "dtstart" in vevent:
+        del vevent["dtstart"]
+
+    if all_day or d0 is None:
+        d_start = datetime.combine(d_only, time(9, 0, 0))
+        d_end = datetime.combine(d_only, time(23, 59, 59))
+        vevent.add("dtstart", d_start)
+        vevent.add("dtend", d_end)
+    else:
+        delta = duracion
+        if delta is None:
+            delta = timedelta(hours=1)
+        if delta.total_seconds() <= 0:
+            delta = timedelta(hours=1)
+        d1 = d0 + delta
+        vevent.add("dtstart", d0)
+        vevent.add("dtend", d1)
+
+    body_err = _put_ical_evento(u, cal0, etag)
+    if body_err:
+        _set_last_evento_error(body_err)
+        return False
+    return True
+
+
 def borrar_evento_por_url(resource_url: str) -> bool:
     """Elimina un evento CalDAV por URL del recurso (.ics)."""
     _set_last_evento_error("")

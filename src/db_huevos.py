@@ -114,6 +114,45 @@ def total_cantidad_en_fecha(fecha_dia: str) -> int:
     return total
 
 
+def buscar_por_id(id_buscar: str) -> RegistroHuevo | None:
+    id_buscar = (id_buscar or "").strip()
+    if not id_buscar:
+        return None
+    for r in leer_todos():
+        if r.id == id_buscar:
+            return r
+    return None
+
+
+def actualizar_registro(reg: RegistroHuevo) -> bool:
+    items = leer_todos()
+    for i, r in enumerate(items):
+        if r.id == reg.id:
+            items[i] = reg
+            escribir_todos(items)
+            return True
+    return False
+
+
+def eliminar_por_id(id_buscar: str) -> bool:
+    id_buscar = (id_buscar or "").strip()
+    if not id_buscar:
+        return False
+    items = leer_todos()
+    nuevos = [r for r in items if r.id != id_buscar]
+    if len(nuevos) == len(items):
+        return False
+    escribir_todos(nuevos)
+    return True
+
+
+def listar_registros_recientes(limite: int = 40) -> list[RegistroHuevo]:
+    limite = max(1, min(500, int(limite)))
+    todos = leer_todos()
+    todos.sort(key=lambda r: (r.fecha_ingesta or ""), reverse=True)
+    return todos[:limite]
+
+
 def resumen_ultimos_dias_desde_hoy(num_dias: int) -> list[tuple[str, int]]:
     """
     Devuelve lista (fecha_YYYY-MM-DD, total_cantidad) desde hoy hacia atrás,

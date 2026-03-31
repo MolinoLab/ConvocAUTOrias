@@ -30,10 +30,28 @@ def fecha_hoy_relativas() -> date:
     return datetime.now(_zona()).date()
 
 
+_MES_NUM_A_NOMBRE: dict[int, str] = {v: k for k, v in MESES_LARGO.items()}
+
+
+def letra_mes_espanol(mes: int) -> str:
+    """Primera letra del nombre del mes en español (mayúscula). mes: 1-12."""
+    if not 1 <= mes <= 12:
+        return "?"
+    nombre = _MES_NUM_A_NOMBRE.get(mes, "")
+    return (nombre[:1] or "?").upper()
+
+
+def _formato_dia_letra_mes(d: int, mo: int, hora_part: str) -> str:
+    out = f"{d:02d}{letra_mes_espanol(mo)}"
+    if hora_part:
+        out = f"{out} {hora_part}"
+    return out
+
+
 def formatear_dia_mes_sin_anio(valor: str) -> str:
     """
-    Para listados de agenda: orden DD, MM sin año (YYYY-MM-DD o YYYY-MM-DD HH:MM).
-    Ej.: 2026-03-24 -> 24, 03; 2026-03-24 14:30 -> 24, 03 14:30
+    Para listados de agenda: DD + letra del mes (YYYY-MM-DD o YYYY-MM-DD HH:MM).
+    Ej.: 2026-03-24 -> 24M; 2026-03-24 14:30 -> 24M 14:30 (marzo -> M).
     """
     s = (valor or "").strip()
     if not s:
@@ -51,15 +69,12 @@ def formatear_dia_mes_sin_anio(valor: str) -> str:
         datetime(y, mo, d)
     except ValueError:
         return valor
-    out = f"{d:02d}, {mo:02d}"
-    if hora_part:
-        out = f"{out} {hora_part}"
-    return out
+    return _formato_dia_letra_mes(d, mo, hora_part)
 
 
 def formatear_fecha_ver(valor: str) -> str:
     """
-    Convierte ISO (con o sin Z, con o sin microsegundos) a DD, MM (sin año) o DD, MM HH:MM.
+    Convierte ISO (con o sin Z, con o sin microsegundos) a DD + letra mes o DD + letra HH:MM.
     Si no parsea como ISO, devuelve el string original.
     """
     s = (valor or "").strip()
@@ -75,9 +90,10 @@ def formatear_fecha_ver(valor: str) -> str:
     else:
         dt = dt.replace(tzinfo=_zona())
     base = raw.split("+", 1)[0].strip()
+    letra = letra_mes_espanol(dt.month)
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", base):
-        return dt.strftime("%d, %m")
-    return dt.strftime("%d, %m %H:%M")
+        return f"{dt.day:02d}{letra}"
+    return f"{dt.day:02d}{letra} {dt.strftime('%H:%M')}"
 
 
 def _match_span(texto: str, pattern: re.Pattern) -> re.Match | None:
@@ -259,3 +275,77 @@ def strip_sufijo_para_fecha(texto: str) -> str:
 
 def strip_sufijo_para_el(texto: str) -> str:
     return strip_sufijo_para_fecha(texto)
+
+
+def _dd_mm_yyyy_a_iso(fecha_dd_mm_yyyy: str) -> str | None:
+    partes = (fecha_dd_mm_yyyy or "").strip().split("-")
+    if len(partes) != 3:
+        return None
+    d, m, y = partes[0], partes[1], partes[2]
+    try:
+        yi = _anio_dos_cifras(int(y))
+        mo = int(m)
+        di = int(d)
+        datetime(yi, mo, di)
+        return f"{yi:04d}-{mo:02d}-{di:02d}"
+    except (ValueError, TypeError):
+        return None
+
+
+def _normalizar_fecha_objetivo_a_yyyy_mm_dd(
+    fragmento: str,
+) -> str | None:
+    """fragmento: texto tras 'para el' / 'para' (una fecha)."""
+    frag = (fragmento or "").strip()
+    if not frag:
+        return None
+
+    m = re.fullmatch(
+        r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{2}|\d{4})",
+        frag,
+    )
+    if m:
+        iso = _dd_mm_yyyy_a_iso(f"{m.group(1)}-{m.group(2)}-{m.group(3)}")
+        if iso:
+            return iso
+
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", frag):
+        try:
+            datetime.strptime(frag, "%Y-%m-%d")
+            return frag
+        except ValueError:
+            pass
+
+    dd_mm_yyyy, _ = extraer_fecha_natural_dd_mm_yyyy_y_resto(frag)
+    if dd_mm_yyyy:
+        return _dd_mm_yyyy_a_iso(dd_mm_yyyy)
+
+    dd_mm_yyyy2, _ = extraer_fecha_relativa_dd_mm_yyyy(frag)
+    if dd_mm_yyyy2:
+        return _dd_mm_yyyy_a_iso(dd_mm_yyyy2)
+
+    return None
+
+
+def extraer_cuerpo_y_fecha_dia_para_el(texto: str) -> tuple[str, str | None]:
+    """
+    Si el texto termina en 'para el <fecha>' o 'para <fecha>', devuelve (cuerpo sin ese sufijo, YYYY-MM-DD).
+    La fecha puede ser DD-MM-AAAA, YYYY-MM-DD, natural (15 de marzo) o relativa (ayer, lunes).
+    """
+    t = (texto or "").strip()
+    if not t:
+        return "", None
+
+    for patron in (
+        re.compile(r"^(.*)\s+para el\s+(.+)$", re.IGNORECASE | re.DOTALL),
+        re.compile(r"^(.*)\s+para\s+(.+)$", re.IGNORECASE | re.DOTALL),
+    ):
+        m = patron.match(t)
+        if not m:
+            continue
+        cuerpo = (m.group(1) or "").strip()
+        frag = (m.group(2) or "").strip()
+        fecha_iso = _normalizar_fecha_objetivo_a_yyyy_mm_dd(frag)
+        if fecha_iso and cuerpo:
+            return cuerpo, fecha_iso
+    return t, None

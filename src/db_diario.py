@@ -78,6 +78,45 @@ def listar() -> list[EntradaDiario]:
     return out
 
 
+def buscar_por_id(eid: str) -> EntradaDiario | None:
+    eid = (eid or "").strip()
+    if not eid:
+        return None
+    for e in listar():
+        if e.id == eid:
+            return e
+    return None
+
+
+def listar_recientes(limite: int = 25) -> list[EntradaDiario]:
+    limite = max(1, min(200, int(limite)))
+    items = listar()
+    items.sort(key=lambda x: (x.fecha_ingesta or ""), reverse=True)
+    return items[:limite]
+
+
+def actualizar_entrada(ent: EntradaDiario) -> bool:
+    items = listar()
+    for i, x in enumerate(items):
+        if x.id == ent.id:
+            items[i] = ent
+            escribir_todo(items)
+            return True
+    return False
+
+
+def eliminar_por_id(eid: str) -> bool:
+    eid = (eid or "").strip()
+    if not eid:
+        return False
+    items = listar()
+    nuevos = [x for x in items if x.id != eid]
+    if len(nuevos) == len(items):
+        return False
+    escribir_todo(nuevos)
+    return True
+
+
 def escribir_todo(items: list[EntradaDiario]) -> None:
     _asegurar_csv()
     with open(config.CSV_DIARIO, "w", encoding="utf-8", newline="") as f:

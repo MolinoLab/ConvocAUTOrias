@@ -205,6 +205,29 @@ CSV_MEMORIAS = DATA_DIR / "memorias.csv"
 CARPETA_MEMORIAS = DATA_DIR / "memorias"
 CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
 CSV_FABRICA = DATA_DIR / "fabrica.csv"
+CSV_RECOMENDACIONES = DATA_DIR / "recomendaciones.csv"
+
+# Notas Nextcloud (API con credencial del usuario Telegram, no la del bot).
+# JSON: { "telegram_username_sin_arroba": { "nc_user": "uid_nextcloud", "app_password": "xxxx" }, ... }
+_nc_notes_raw = os.getenv("NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM", "").strip()
+NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM: dict[str, dict[str, str]] = {}
+if _nc_notes_raw:
+    try:
+        _nn_obj = json.loads(_nc_notes_raw)
+        if isinstance(_nn_obj, dict):
+            for k, v in _nn_obj.items():
+                ks = str(k).strip().lstrip("@").lower()
+                if not ks or not isinstance(v, dict):
+                    continue
+                nu = str(v.get("nc_user", "")).strip()
+                np = str(v.get("app_password", "")).strip()
+                if nu and np:
+                    NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM[ks] = {
+                        "nc_user": nu,
+                        "app_password": np,
+                    }
+    except json.JSONDecodeError:
+        pass
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")
