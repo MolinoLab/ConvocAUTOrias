@@ -1,0 +1,8 @@
+id,resumen,tags,categorias,presupuesto_aproximado,ruta,fecha_ingesta,fuente
+<<<<<<< HEAD
+39c8fad043ff01c3,"Creo que sería interesante que el número de la convocatoria o el IVE mejor el número se muestre cada vez que haya un recordatorio o en la lista para poder preguntar sobre ella, si ...",,,,data/ideas/39c8fad043ff01c3.md,2026-03-18T16:01:49.732542,telegram_audio
+1655deaa1945ac3d,"Comendría que los recordatorios a las próximas convocatorias muestre información, un enlace directo o más información sobre ella. También que se puedan revisar las ideas.",,,,data/ideas/1655deaa1945ac3d.md,2026-03-18T16:03:21.832003,telegram_audio
+=======
+0095499b681c8339,otra BBDD para nuevas funcionalidades y tenerlas a mano al ponerme a programar,,,,data/ideas/0095499b681c8339.md,2026-03-19T22:56:50.928957,telegram_texto
+535ec5eabdc52f63,"crear otra herramienta que también optimice o lama o seguir creando funcionalidades en esta misma, no? que no sea solo para convocatorias sino que del voy a pasar ideas, tareas y q...",,,,data/ideas/535ec5eabdc52f63.md,2026-03-19T22:57:21.960024,telegram_audio
+>>>>>>> a1c1501b82e8212ef80a45cfe7ea8b0b056651e1
