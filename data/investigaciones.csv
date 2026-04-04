@@ -1,4 +1,6 @@
 id,fecha,estado,concepto,resumen,link,archivo,telegram_chat_id
 c7f6d2f13e584049,2026-03-27T09:47:24.623996,enviado,ryoji ikeda,Download the YouTube app para disfrutar una experiencia de visualización más rica en tu teléfono. Descarga la aplicación en el Google Play Store.,https://support.google.com/youtube/answer/3227660?hl=en&co=GENIE.Platform=Android,ryoji_ikeda.md,279597383
 b21bc549be0a0fa1,2026-03-27T11:05:54.006775,error,soluciones y herramientas en azure y office365 para optimización mediante IA,Ollama no devolvio JSON valido (revisa modelo y TIMEOUT_OLLAMA_INVESTIGACION).,,soluciones_y_herramientas_en_azure.md,279597383
-f5f9a6d4d85d7a91,2026-03-27T21:41:48.298869,error,business central,Ollama no devolvio JSON valido (revisa modelo y TIMEOUT_OLLAMA_INVESTIGACION).,,business_central.md,279597383
+f5f9a6d4d85d7a91,2026-03-27T21:41:48.298869,pendiente,business central,Ollama no devolvio JSON valido (revisa modelo y TIMEOUT_OLLAMA_INVESTIGACION).,,business_central.md,279597383
+474a02d211305524,2026-04-02T17:20:52.411537,error,arena ia,Sin resultados de busqueda web para este concepto.,,arena_ia.md,279597383
+77eb24b54316be16,2026-04-02T21:04:13.523827,enviado,power webs dinamicamente,"Power Automate es un complemento de Microsoft que permite automatizar tareas en Office 365 y otros productos Microsoft. Al utilizarlo junto con otros productos, mejora significativamente el rendimiento.",https://www.zhihu.com/column/c_1416150319630344192,power_webs_dinamicamente.md,279597383
