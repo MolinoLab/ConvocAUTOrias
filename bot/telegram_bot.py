@@ -4,6 +4,7 @@ ideas, memorias, proyectos, tiempos, enlaces, investigaciones (/investiga), func
 tareas Deck, fabricación (Fabricar), eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
+import asyncio
 import hashlib
 import json
 import os
@@ -75,6 +76,7 @@ from src.db_enlaces import (
     leer_enlaces,
 )
 from src.agenda_resumen import texto_agenda_proximos_dias
+from src.descarga_media import ejecutar_descarga
 from src.caldav_client import (
     actualizar_evento_por_url,
     borrar_evento_por_url,
@@ -670,134 +672,68 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     texto = (
-        f"armonIA bot v{config.APP_VERSION}\n\n"
-        "Comandos por tema (orden sugerido: crear → listar → ver → borrar):\n\n"
-        "[Convocatorias]\n"
-        "/convo <url> — Añade convocatoria por URL\n"
-        "/listconvo — Lista futuras por proximidad\n"
-        "/verconvo <numero> — Detalle (numero del ultimo /listconvo en este chat)\n"
-        "/modconvo <numero> — Edicion guiada por campo (/cancelarmodlista)\n"
-        "/rmconvo <num ...> — Elimina una o varias por numero del listado\n\n"
-        "[Enlaces sin categorizar]\n"
-        "/url <https://...> [notas] — Guardar en enlaces.csv (tags/categorias en el CSV)\n"
-        "URL suelta (sin comando) — Se guarda igual que /url\n"
-        "/listurl — Listar enlaces\n"
-        "/verurl <numero>\n"
-        "/modenlace <numero> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmurl <num ...>\n\n"
-        "[Ideas]\n"
-        "/idea <texto> — Guardar\n"
-        "/listideas — Listar (recientes primero)\n"
-        "/veridea <numero>\n"
-        "/modidea <numero> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmidea <num ...>\n\n"
-        "[Memorias]\n"
-        "/memoria <texto> — Guardar (resumen en CSV, desarrollo en data/memorias/)\n"
-        "/listmemorias — Listar (recientes primero)\n"
-        "/vermemoria <numero>\n"
-        "/modmemoria <numero> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmmemoria <num ...>\n\n"
-        "[Proyectos]\n"
-        "/proyecto — Alta guiada (titulo, contacto, presupuesto, fecha entrega, estado, tags, .md). "
-        "Fecha de creacion automatica (hoy segun APP_TIMEZONE).\n"
-        "/cancelarproyecto — Abortar la alta guiada\n"
-        "/listproyectos — Listar\n"
-        "/verproyecto <numero>\n"
-        "/modproyecto <numero> — Edicion guiada por campo; /cancelarmodproyecto para salir\n"
-        "/rmproyecto <num ...>\n\n"
-        "[Tiempos por proyecto]\n"
-        "/tiempo <num_proyecto> — Iniciar (un solo activo global)\n"
-        "/tiempofin — Cerrar el tiempo activo\n"
-        "/tiempo <num_proyecto> <minutos> — Sumar tiempo (hoy desde 00:00)\n"
-        "/listtiempo — Listar registros (indice para /modtiempo)\n"
-        "/vertiempo <numero>\n"
-        "/modtiempo <numero> — Wizard (proyecto/inicio/fin); /cancelarmodtiempo\n"
-        "/modtiempo <num_tiempo> <fecha hora fin> — Solo corregir fin y duracion\n\n"
-        "[Funcionalidades]\n"
-        "/func <texto> [prioridad 1-5] — Registrar (prioridad por defecto 3)\n"
-        "/listfunc o /listfuncionalidades — Listar por prioridad\n"
-        "/verfunc <numero>\n"
-        "/modfunc <numero> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmfunc <num ...>\n\n"
-        "[Investigaciones]\n"
-        "/investiga <concepto o frase> — Encola investigación (CSV + proceso automático)\n"
-        "/listinvestigaciones — Listar (recientes primero)\n"
-        "/verinvestigacion <numero|id> — Detalle CSV + contenido del .md si existe\n"
-        "/modinv <numero> — Edicion guiada (/cancelarmodlista)\n"
-        "/rminvestigacion <numero ...> — Borrar fila y .md asociado\n\n"
-        "[Tareas Deck]\n"
-        '/tarea "Titulo" [fecha] ["Desc"] — Tarjeta (columna por defecto)\n'
-        f'/comprar "Titulo" [fecha] ["Desc"] — Columna "{DECK_STACK_COMPRAR}"\n'
-        "/listtareas — Listar por fecha\n"
-        "/vertarea <numero> — Detalle de la tarjeta\n"
-        "/modtarea <numero> — Edicion guiada (titulo, desc, vencimiento); /cancelarmodtarea\n"
-        "/rmtarea <num ...>\n\n"
-        "[Fabricación Deck]\n"
-        f"/fabrica o /fab <texto> — Columna \"{config.DECK_STACK_FABRICAR or 'Fabricar'}\" "
-        "(medidas, laser/3d, fecha opcionales)\n"
-        "/listfab — Listar registros (CSV + enlace Deck)\n"
-        "/verfab <numero>\n"
-        "/modfab <numero> — Edicion guiada; /cancelarmodfab para salir\n"
-        "/rmfab <num ...>\n\n"
-        "[Eventos CalDAV]\n"
-        "/evento <nombre> <fecha> [hora] [duracion] — Crear; hora HH:MM o coloquial (a las 5 y media de la tarde); "
-        "duracion: durante N horas/dias/minutos (con hora; si no, 1 h)\n"
-        "/listeventos [+ | ++] — 7 / 14 / 21 dias\n"
-        "/informame — Agenda proximos 7 dias (CalDAV equipo + personal si aplica + Deck + VTODO)\n"
-        "/info [dias] — Igual que /informame; dias por defecto 7 (max 90)\n"
-        "/verevento <numero>\n"
-        "/modevento <numero> — Edicion guiada; /cancelarmodevento\n"
-        "/rmevento <num ...>\n\n"
-        "[Huevos]\n"
-        "/huevos <cantidad> — Registro del dia (la respuesta muestra total acumulado del dia)\n"
-        "/listhuevos [dias] — Resumen por dia hacia atras (6 por defecto)\n"
-        "/listregistroshuevos [n] — Ultimos registros individuales (indice p. ver/mod/rmhuevo)\n"
-        "/verhuevo <n>\n"
-        "/modhuevo <n> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmhuevo <num ...>\n\n"
-        "[Diario]\n"
-        "/diario <texto> — Nota del dia; al final: para el <fecha> (antigua o relativa)\n"
-        "/listdiario [n] — Ultimas entradas en diario.csv\n"
-        "/verdiario <n>\n"
-        "/moddiario <n> — Resumen (/cancelarmodlista)\n"
-        "/rmdiario <num ...>\n\n"
-        "[Recomendaciones]\n"
-        "/rec o /recomendacion <tipo> <nombre> [notas]\n"
-        "/listrecomendaciones — Listar\n"
-        "/verrec <n>\n"
-        "/modrec <n> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmrec <num ...>\n\n"
-        "[Notas Nextcloud]\n"
-        "Requiere NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM en .env (nc_user + app_password).\n"
-        "/notas o /nt <titulo> [| contenido]\n"
-        "/listnotas o /lsnt — Lista (indice para ver/mod/rm)\n"
-        "/vernota o /vnt <n>\n"
-        "/modnota o /modnt <n> — Wizard; /cancelarmodnota\n"
-        "/rmnota o /rmnt <num ...>\n\n"
-        "[Contabilidad / Facturas]\n"
-        "/factura — Luego envia foto o PDF; sube a Nextcloud y fila en contabilidad.csv\n"
-        "/cancelarfactura — Cancela espera de archivo tras /factura\n"
-        "/listcontabilidad — Listado (indice para /verfactura /rmfactura /modfactura)\n"
-        "/verfactura <n|id>\n"
-        "/rmfactura <n ...>\n"
-        "/modfactura <n|id> — Edicion guiada por campo; /cancelarmodfactura para salir\n\n"
-        "[Pendientes]\n"
-        "Audio sin comando reconocido -> pendientes.csv\n"
-        "/listpendientes — Listar (recientes primero)\n"
-        "/verpendiente <n|id>\n"
-        "/modpendiente <n> — Edicion guiada (/cancelarmodlista)\n"
-        "/rmpendientes <n ...>\n"
-        "/mvpendiente <n|id> <tipo> [args extra] — idea, memoria, tarea, evento, funcionalidad, "
-        "investiga, comprar, fabrica, diario (func = funcionalidad, fab = fabrica)\n\n"
-        "[Audio]\n"
-        "Primera palabra: idea, memoria, funcionalidad, tarea, comprar, fabrica, fab, evento, eventos, investiga, "
-        "huevos, diario. Si no coincide, se guarda en pendientes (no como idea).\n"
-        "Por voz, tarea/compra/evento: usa 'para el' o 'para' antes de la fecha "
-        "(ej. tarea comprar pan para mañana, para el 25-03 o para el miércoles). "
-        "Funcionalidad: 'prioridad' + numero o palabra (uno…cinco).\n\n"
-        "/ayuda — Esta lista"
+        f"armonIA v{config.APP_VERSION} — comandos (crear → listar → ver → borrar). "
+        "Ediciones guiadas: /mod* y /cancelarmod* o /cancelarmodlista según caso.\n\n"
+        "[Convocatorias] /convo /listconvo /verconvo /modconvo /rmconvo\n"
+        "[Enlaces] URL suelta o /url — /listurl /verurl /modenlace /rmurl\n"
+        "[Ideas] /idea /listideas /veridea /modidea /rmidea\n"
+        "[Memorias] /memoria /listmemorias /vermemoria /modmemoria /rmmemoria\n"
+        "[Proyectos] /proyecto /cancelarproyecto /listproyectos /verproyecto /modproyecto /rmproyecto\n"
+        "[Tiempos] /tiempo /tiempofin /listtiempo /vertiempo /modtiempo\n"
+        "[Funcionalidades] /func /listfunc /verfunc /modfunc /rmfunc\n"
+        "[Investigaciones] /investiga /listinvestigaciones /verinvestigacion /modinv /rminvestigacion\n"
+        "[Deck] /tarea /comprar /listtareas /vertarea /modtarea /rmtarea\n"
+        f"[Fabricar] /fabrica /fab /listfab /verfab /modfab /rmfab (columna {config.DECK_STACK_FABRICAR or 'Fabricar'})\n"
+        "[CalDAV] /evento /listeventos /informame /info [dias] /verevento /modevento /rmevento\n"
+        "[Huevos] /huevos /listhuevos /listregistroshuevos /verhuevo /modhuevo /rmhuevo\n"
+        "[Diario] /diario /listdiario /verdiario /moddiario /rmdiario\n"
+        "[Recomendaciones] /rec /listrecomendaciones /verrec /modrec /rmrec\n"
+        "[Notas NC] /notas /listnotas /vernota /modnota /rmnota (cred. en .env)\n"
+        "[Facturas] /factura /cancelarfactura /listcontabilidad /verfactura /rmfactura /modfactura\n"
+        "[Pendientes] /listpendientes /verpendiente /modpendiente /rmpendientes /mvpendiente\n"
+        "[Descarga VPS] /descarga <url o busqueda> — yt-dlp en carpeta configurada\n"
+        "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, fabrica, fab, "
+        "evento, investiga, huevos, diario; si no, pendiente. Fechas: «para el …» / «para …». "
+        "/ayuda — esta lista"
     )
     await _reply_texto_largo(update, texto)
+
+
+async def cmd_descarga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /descarga <url https://... o texto para buscar en YouTube>\n"
+            f"Se guarda en: {config.DESCARGAS_DIR}"
+        )
+        return
+    query = " ".join(context.args).strip()
+    aviso = await update.message.reply_text("Descargando…")
+    loop = asyncio.get_event_loop()
+
+    def _run() -> tuple[bool, str, str | None]:
+        return ejecutar_descarga(query)
+
+    ok, msg, ruta = await loop.run_in_executor(None, _run)
+    try:
+        await aviso.delete()
+    except Exception:
+        pass
+    if not ok:
+        await update.message.reply_text(f"No se pudo descargar.\n{msg[:3500]}")
+        return
+    if ruta:
+        rp = Path(ruta)
+        await update.message.reply_text(f"{msg}\n{rp}")
+        max_b = config.DESCARGA_ENVIAR_TELEGRAM_MAX_MB * 1024 * 1024
+        if max_b > 0 and rp.is_file() and rp.stat().st_size <= max_b:
+            try:
+                with rp.open("rb") as f:
+                    await update.message.reply_document(document=f, filename=rp.name)
+            except Exception as exc:
+                await update.message.reply_text(f"(No se pudo enviar el archivo: {exc})")
 
 
 async def cmd_convo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3792,7 +3728,9 @@ async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             return
     msg = await update.message.reply_text(f"Consultando agenda ({dias} dias)...")
     un_ag = _username_telegram_para_agenda(update)
-    texto = texto_agenda_proximos_dias(dias, telegram_username=un_ag)
+    texto = texto_agenda_proximos_dias(
+        dias, telegram_username=un_ag, mostrar_calendario=False
+    )
     await msg.delete()
     await _reply_texto_largo(update, texto)
 
@@ -6873,6 +6811,7 @@ def main() -> None:
 
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
+    app.add_handler(CommandHandler("descarga", cmd_descarga))
     app.add_handler(CommandHandler("convo", cmd_convo))
     app.add_handler(CommandHandler("url", cmd_url))
     app.add_handler(CommandHandler("listurl", cmd_listurl))
@@ -6978,6 +6917,7 @@ def main() -> None:
     app.add_handler(CommandHandler("modfactura", cmd_modfactura))
     # Alias: /ls* = /list*, /v* = /ver*, /rm* abreviado = mismo handler que /rm… largo
     for _alias, _cmd in (
+        ("dl", cmd_descarga),
         ("lsconvo", cmd_listar),
         ("lscv", cmd_listar),
         ("vconvo", cmd_verconvo),

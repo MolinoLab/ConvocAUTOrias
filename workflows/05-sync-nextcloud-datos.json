@@ -1,5 +1,5 @@
 {
-  "name": "ConvocAUTOrias - Sync Nextcloud datos",
+  "name": "ConvocAUTOrias - Sync datos CSV + notas MD",
   "nodes": [
     {
       "parameters": {
@@ -44,7 +44,9 @@
     }
   },
   "active": false,
-  "settings": {},
+  "settings": {
+    "timezone": "Europe/Madrid"
+  },
   "versionId": "1",
   "meta": {
     "templateCredsSetupCompleted": true

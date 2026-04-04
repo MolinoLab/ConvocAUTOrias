@@ -1,5 +1,5 @@
 {
-  "name": "ConvocAUTOrias - Agenda mañana 22h",
+  "name": "ConvocAUTOrias - Agenda mañana 18h",
   "nodes": [
     {
       "parameters": {
@@ -7,13 +7,13 @@
           "interval": [
             {
               "field": "cronExpression",
-              "expression": "0 0 22 * * *"
+              "expression": "0 0 18 * * *"
             }
           ]
         }
       },
       "id": "schedule-trigger",
-      "name": "Diario 22:00",
+      "name": "Diario 18:00",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [240, 300]
@@ -31,7 +31,7 @@
     }
   ],
   "connections": {
-    "Diario 22:00": {
+    "Diario 18:00": {
       "main": [
         [
           {

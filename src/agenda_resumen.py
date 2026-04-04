@@ -15,10 +15,16 @@ from src.deck_client import listar_tareas_deck, obtener_ultimo_error_deck
 from src.fecha_display import fecha_hoy_relativas, formatear_dia_mes_sin_anio
 
 
-def texto_agenda_proximos_dias(dias: int = 7, telegram_username: str | None = None) -> str:
+def texto_agenda_proximos_dias(
+    dias: int = 7,
+    telegram_username: str | None = None,
+    *,
+    mostrar_calendario: bool = True,
+) -> str:
     """
     Texto listo para Telegram: eventos y tareas con vencimiento/inicio en los próximos `dias`
     días (incluye hoy). `dias` mínimo 1.
+    Si `mostrar_calendario` es False, no se muestra el nombre del calendario CalDAV (p. ej. /info).
     """
     dias = max(1, int(dias))
     hoy = fecha_hoy_relativas()
@@ -69,7 +75,7 @@ def texto_agenda_proximos_dias(dias: int = 7, telegram_username: str | None = No
         lineas.append("Eventos (CalDAV):")
         for ev in eventos:
             cal = ev.get("calendario")
-            suf = f" ({cal})" if cal else ""
+            suf = f" ({cal})" if (mostrar_calendario and cal) else ""
             fh = formatear_dia_mes_sin_anio(ev["start_iso"])
             lineas.append(f"  • [{fh}]{suf} {ev['summary']}")
         lineas.append("")
@@ -94,7 +100,7 @@ def texto_agenda_proximos_dias(dias: int = 7, telegram_username: str | None = No
         lineas.append("Tareas calendario (VTODO, due en ventana):")
         for t in sorted(vtodos, key=lambda x: (x.get("due") or "", x.get("summary") or "")):
             cal = t.get("calendario")
-            suf = f" ({cal})" if cal else ""
+            suf = f" ({cal})" if (mostrar_calendario and cal) else ""
             due_v = formatear_dia_mes_sin_anio(t.get("due") or "")
             lineas.append(f"  • [{due_v}]{suf} {t.get('summary') or '(sin titulo)'}")
         lineas.append("")

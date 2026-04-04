@@ -13,7 +13,7 @@ DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
 # Versión del bot (armonIA en /ayuda y arranque). Subir el número en cada cambio que despliegues.
-APP_VERSION = os.getenv("APP_VERSION", "0.26").strip() or "0.26"
+APP_VERSION = os.getenv("APP_VERSION", "0.27").strip() or "0.27"
 # Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
 
@@ -207,6 +207,19 @@ CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
 CSV_FABRICA = DATA_DIR / "fabrica.csv"
 CSV_RECOMENDACIONES = DATA_DIR / "recomendaciones.csv"
 
+# Descargas de media (yt-dlp) en el servidor
+_descargas_dir_env = os.getenv("DESCARGAS_DIR", "").strip()
+if _descargas_dir_env:
+    DESCARGAS_DIR = Path(_descargas_dir_env)
+    if not DESCARGAS_DIR.is_absolute():
+        DESCARGAS_DIR = DATA_DIR / DESCARGAS_DIR
+else:
+    DESCARGAS_DIR = DATA_DIR / "descargas"
+DESCARGAS_DIR.mkdir(parents=True, exist_ok=True)
+DESCARGAS_TIMEOUT_SEC = max(60, int(os.getenv("DESCARGAS_TIMEOUT_SEC", "600")))
+DESCARGAS_MAX_MB = max(1, int(os.getenv("DESCARGAS_MAX_MB", "500")))
+DESCARGA_ENVIAR_TELEGRAM_MAX_MB = max(0, int(os.getenv("DESCARGA_ENVIAR_TELEGRAM_MAX_MB", "45")))
+
 # Notas Nextcloud (API con credencial del usuario Telegram, no la del bot).
 # JSON: { "telegram_username_sin_arroba": { "nc_user": "uid_nextcloud", "app_password": "xxxx" }, ... }
 _nc_notes_raw = os.getenv("NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM", "").strip()
@@ -228,6 +241,11 @@ if _nc_notes_raw:
                     }
     except json.JSONDecodeError:
         pass
+
+# Credenciales para sincronizar .md locales → Nextcloud Notes (cron/API; sin usuario Telegram).
+NEXTCLOUD_NOTES_SYNC_NC_USER = os.getenv("NEXTCLOUD_NOTES_SYNC_NC_USER", "").strip()
+NEXTCLOUD_NOTES_SYNC_APP_PASSWORD = os.getenv("NEXTCLOUD_NOTES_SYNC_APP_PASSWORD", "").strip()
+NOTES_SYNC_MAP_PATH = DATA_DIR / "nextcloud_notes_sync_map.json"
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")

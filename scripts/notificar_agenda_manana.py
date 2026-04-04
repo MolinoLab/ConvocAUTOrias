@@ -1,27 +1,26 @@
 """
 Notifica por Telegram eventos CalDAV y tareas (Deck + VTODO) con fecha el día siguiente
-respecto al calendario Europe/Madrid. Si no hay nada, no envía mensaje.
+respecto a APP_TIMEZONE (defecto Europe/Madrid). Si no hay nada, no envía mensaje.
 """
 from __future__ import annotations
 
 import sys
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import config
 from src.caldav_client import listar_eventos_en_ventana, listar_tareas
 from src.deck_client import listar_tareas_deck
-from src.fecha_display import formatear_dia_mes_sin_anio
+from src.fecha_display import fecha_hoy_relativas, formatear_dia_mes_sin_anio
 from src.notifier import enviar_mensaje_a_chats
 
-MADRID = ZoneInfo("Europe/Madrid")
 CHUNK = 4000
 
 
-def _manana_madrid() -> tuple[date, str]:
-    d = datetime.now(MADRID).date() + timedelta(days=1)
+def _manana_local() -> tuple[date, str]:
+    d = fecha_hoy_relativas() + timedelta(days=1)
     return d, d.isoformat()
 
 
@@ -32,7 +31,7 @@ def _enviar_largo(texto: str) -> bool:
 
 
 def main() -> int:
-    d_manana, iso = _manana_madrid()
+    d_manana, iso = _manana_local()
     win_start = datetime.combine(d_manana, time.min)
     win_end_excl = win_start + timedelta(days=1)
 
@@ -46,14 +45,14 @@ def main() -> int:
 
     if not eventos and not deck and not vtodos:
         print(
-            f"Nada pendiente para mañana ({formatear_dia_mes_sin_anio(iso)}, Madrid). "
-            "No se envia Telegram."
+            f"Nada pendiente para mañana ({formatear_dia_mes_sin_anio(iso)}, "
+            f"{config.APP_TIMEZONE}). No se envia Telegram."
         )
         return 0
 
     iso_show = formatear_dia_mes_sin_anio(iso)
     lineas = [
-        f"Recordatorio: agenda para mañana ({iso_show}, hora Europa/Madrid).\n",
+        f"Recordatorio: agenda para mañana ({iso_show}, zona {config.APP_TIMEZONE}).\n",
         "Resumen automático; en el bot usa /informame o /info [días] (calendarios de equipo).\n",
     ]
 
