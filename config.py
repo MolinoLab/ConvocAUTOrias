@@ -220,6 +220,22 @@ DESCARGAS_TIMEOUT_SEC = max(60, int(os.getenv("DESCARGAS_TIMEOUT_SEC", "600")))
 DESCARGAS_MAX_MB = max(1, int(os.getenv("DESCARGAS_MAX_MB", "500")))
 DESCARGA_ENVIAR_TELEGRAM_MAX_MB = max(0, int(os.getenv("DESCARGA_ENVIAR_TELEGRAM_MAX_MB", "45")))
 
+# Tuya Cloud (enchufe smart)
+TUYA_CLIENT_ID = os.getenv("TUYA_CLIENT_ID", "").strip()
+TUYA_CLIENT_SECRET = os.getenv("TUYA_CLIENT_SECRET", "").strip()
+TUYA_DEVICE_ID = os.getenv("TUYA_DEVICE_ID", "").strip()
+TUYA_SWITCH_CODE = os.getenv("TUYA_SWITCH_CODE", "switch_1").strip() or "switch_1"
+TUYA_REGION = os.getenv("TUYA_REGION", "eu").strip() or "eu"
+TUYA_API_BASE_URL = os.getenv("TUYA_API_BASE_URL", "").strip()
+
+# BambuLab (estado por MQTT local; apagado vía enchufe asociado)
+BAMBU_HOST = os.getenv("BAMBU_HOST", "").strip()
+BAMBU_SERIAL = os.getenv("BAMBU_SERIAL", "").strip()
+BAMBU_ACCESS_CODE = os.getenv("BAMBU_ACCESS_CODE", "").strip()
+BAMBU_MQTT_PORT = max(1, int(os.getenv("BAMBU_MQTT_PORT", "8883")))
+BAMBU_STATUS_TIMEOUT_SEC = max(2, int(os.getenv("BAMBU_STATUS_TIMEOUT_SEC", "8")))
+BAMBU_POWER_OFF_TUYA_DEVICE_ID = os.getenv("BAMBU_POWER_OFF_TUYA_DEVICE_ID", "").strip()
+
 # Notas Nextcloud (API con credencial del usuario Telegram, no la del bot).
 # JSON: { "telegram_username_sin_arroba": { "nc_user": "uid_nextcloud", "app_password": "xxxx" }, ... }
 _nc_notes_raw = os.getenv("NEXTCLOUD_NOTES_CREDENTIALS_BY_TELEGRAM", "").strip()

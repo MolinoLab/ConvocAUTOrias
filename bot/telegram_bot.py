@@ -77,6 +77,11 @@ from src.db_enlaces import (
 )
 from src.agenda_resumen import texto_agenda_proximos_dias
 from src.descarga_media import ejecutar_descarga
+from src.bambulab_client import (
+    apagar_impresora,
+    obtener_estado_impresion,
+    obtener_ultimo_error_bambu,
+)
 from src.caldav_client import (
     actualizar_evento_por_url,
     borrar_evento_por_url,
@@ -195,6 +200,7 @@ from src.extraccion_factura import (
     trimestre_desde_fecha,
 )
 from src.nextcloud_client import subir_archivo_facturas
+from src.tuya_client import obtener_estado_enchufe, obtener_ultimo_error_tuya, poner_enchufe
 
 # Regex para detectar URLs
 URL_PATTERN = re.compile(
@@ -645,7 +651,7 @@ _ACCIONES_AUDIO = frozenset(
         "diario",
     }
 )
-_ACCION_AUDIO_SINONIMOS: dict[str, str] = {"eventos": "evento"}
+_ACCION_AUDIO_SINONIMOS: dict[str, str] = {"eventos": "evento", "compra": "comprar"}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -692,6 +698,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Facturas] /factura /cancelarfactura /listcontabilidad /verfactura /rmfactura /modfactura\n"
         "[Pendientes] /listpendientes /verpendiente /modpendiente /rmpendientes /mvpendiente\n"
         "[Descarga VPS] /descarga <url o busqueda> — yt-dlp en carpeta configurada\n"
+        "[IoT] /enchufeestado /enchufeen /enchufeapagar /impresoraestado /impresoraapagar\n"
         "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, fabrica, fab, "
         "evento, investiga, huevos, diario; si no, pendiente. Fechas: «para el …» / «para …». "
         "/ayuda — esta lista"
@@ -734,6 +741,86 @@ async def cmd_descarga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     await update.message.reply_document(document=f, filename=rp.name)
             except Exception as exc:
                 await update.message.reply_text(f"(No se pudo enviar el archivo: {exc})")
+
+
+async def cmd_enchufeestado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    ok, msg = obtener_estado_enchufe()
+    if not ok:
+        await update.message.reply_text(f"No se pudo consultar Tuya.\n{obtener_ultimo_error_tuya()}")
+        return
+    await update.message.reply_text(msg)
+
+
+async def cmd_enchufeen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    ok, msg = poner_enchufe(True)
+    if not ok:
+        await update.message.reply_text(f"No se pudo encender el enchufe.\n{obtener_ultimo_error_tuya()}")
+        return
+    await update.message.reply_text(msg)
+
+
+async def cmd_enchufeapagar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    ok, msg = poner_enchufe(False)
+    if not ok:
+        await update.message.reply_text(f"No se pudo apagar el enchufe.\n{obtener_ultimo_error_tuya()}")
+        return
+    await update.message.reply_text(msg)
+
+
+async def cmd_impresoraestado(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    aviso = await update.message.reply_text("Consultando estado de impresora…")
+    loop = asyncio.get_event_loop()
+
+    def _run() -> tuple[bool, str]:
+        return obtener_estado_impresion()
+
+    ok, msg = await loop.run_in_executor(None, _run)
+    try:
+        await aviso.delete()
+    except Exception:
+        pass
+    if not ok:
+        await update.message.reply_text(
+            f"No se pudo consultar BambuLab.\n{obtener_ultimo_error_bambu()}"
+        )
+        return
+    await update.message.reply_text(msg)
+
+
+async def cmd_impresoraapagar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if context.args and context.args[0].strip().lower() == "confirmar":
+        loop = asyncio.get_event_loop()
+
+        def _run() -> tuple[bool, str]:
+            return apagar_impresora()
+
+        ok, msg = await loop.run_in_executor(None, _run)
+        if not ok:
+            await update.message.reply_text(
+                f"No se pudo apagar la impresora.\n{obtener_ultimo_error_bambu()}"
+            )
+            return
+        await update.message.reply_text(msg)
+        return
+    await update.message.reply_text(
+        "Esta acción apaga la impresora mediante su enchufe asociado.\n"
+        "Confirma con: /impresoraapagar confirmar"
+    )
 
 
 async def cmd_convo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3031,6 +3118,8 @@ async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     texto_raw = (update.message.text or "").strip()
     if texto_raw.startswith("/comprar"):
         texto_raw = texto_raw[len("/comprar") :].strip()
+    elif texto_raw.startswith("/compra"):
+        texto_raw = texto_raw[len("/compra") :].strip()
 
     if not texto_raw:
         await update.message.reply_text(
@@ -4900,11 +4989,16 @@ async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
         return
-    if not context.args or len(context.args) != 1:
-        await update.message.reply_text("Uso: /huevos <cantidad>\nEjemplo: /huevos 12")
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /huevos <cantidad> [para el <fecha>]\n"
+            "Ejemplos: /huevos 12 | /huevos 12 para ayer | /huevos 12 para el 2026-04-01"
+        )
         return
+    texto = " ".join(context.args).strip()
+    partes = texto.split(None, 1)
     try:
-        cantidad = int(context.args[0].strip())
+        cantidad = int(partes[0].strip())
     except ValueError:
         await update.message.reply_text("La cantidad debe ser un numero entero.")
         return
@@ -4912,12 +5006,24 @@ async def cmd_huevos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("La cantidad debe ser mayor que cero.")
         return
 
-    hoy = datetime.now().strftime("%Y-%m-%d")
-    añadir_huevo(cantidad, hoy, fuente="telegram")
-    total_dia = total_cantidad_en_fecha(hoy)
+    fecha_objetivo = datetime.now().strftime("%Y-%m-%d")
+    resto = partes[1].strip() if len(partes) > 1 else ""
+    if resto:
+        if not resto.lower().startswith("para "):
+            resto = f"para {resto}"
+        _, fecha_parseada = extraer_cuerpo_y_fecha_dia_para_el(f"x {resto}")
+        if not fecha_parseada:
+            await update.message.reply_text(
+                "No pude interpretar la fecha. Usa formatos como: "
+                "ayer, lunes, 15-03-2026 o 2026-03-15."
+            )
+            return
+        fecha_objetivo = fecha_parseada
+    añadir_huevo(cantidad, fecha_objetivo, fuente="telegram")
+    total_dia = total_cantidad_en_fecha(fecha_objetivo)
     await update.message.reply_text(
         f"Registro de huevos guardado.\n"
-        f"Fecha: {hoy}\n"
+        f"Fecha: {fecha_objetivo}\n"
         f"Esta vez: {cantidad}\n"
         f"Total del dia: {total_dia}"
     )
@@ -5660,6 +5766,8 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     tipo = "funcionalidad" if tipo_in == "func" else tipo_in
     if tipo == "fab":
         tipo = "fabrica"
+    if tipo == "compra":
+        tipo = "comprar"
     if tipo not in _TIPOS_MV_VALIDOS:
         await update.message.reply_text(
             f"Tipo no valido: {tipo_in}. Usa: {', '.join(sorted(_TIPOS_MV_VALIDOS))} o func"
@@ -6812,6 +6920,11 @@ def main() -> None:
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
     app.add_handler(CommandHandler("descarga", cmd_descarga))
+    app.add_handler(CommandHandler("enchufeestado", cmd_enchufeestado))
+    app.add_handler(CommandHandler("enchufeen", cmd_enchufeen))
+    app.add_handler(CommandHandler("enchufeapagar", cmd_enchufeapagar))
+    app.add_handler(CommandHandler("impresoraestado", cmd_impresoraestado))
+    app.add_handler(CommandHandler("impresoraapagar", cmd_impresoraapagar))
     app.add_handler(CommandHandler("convo", cmd_convo))
     app.add_handler(CommandHandler("url", cmd_url))
     app.add_handler(CommandHandler("listurl", cmd_listurl))
@@ -6884,6 +6997,7 @@ def main() -> None:
     app.add_handler(CommandHandler("rmfunc", cmd_rmfunc))
     app.add_handler(CommandHandler("tarea", cmd_tarea))
     app.add_handler(CommandHandler("comprar", cmd_comprar))
+    app.add_handler(CommandHandler("compra", cmd_comprar))
     app.add_handler(CommandHandler("fabrica", cmd_fabrica))
     app.add_handler(CommandHandler("fab", cmd_fab))
     app.add_handler(CommandHandler("listfab", cmd_listfab))

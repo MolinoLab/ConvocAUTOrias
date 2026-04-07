@@ -19,6 +19,14 @@ def _comando_yt_dlp() -> list[str]:
     return [sys.executable, "-m", "yt_dlp"]
 
 
+def _mensaje_dependencia_yt_dlp() -> str:
+    return (
+        "yt-dlp no disponible en este runtime. "
+        "Instala dependencias en el mismo Python que ejecuta el bot "
+        "(pip install -r requirements.txt) o usa una imagen Docker actualizada."
+    )
+
+
 def normalizar_entrada_descarga(texto: str) -> str:
     s = (texto or "").strip()
     if not s:
@@ -41,7 +49,8 @@ def ejecutar_descarga(query_completa: str) -> tuple[bool, str, str | None]:
 
     config.DESCARGAS_DIR.mkdir(parents=True, exist_ok=True)
     plantilla = str(config.DESCARGAS_DIR / "%(title).200B [%(id)s].%(ext)s")
-    cmd = _comando_yt_dlp() + [
+    cmd_base = _comando_yt_dlp()
+    cmd = cmd_base + [
         "-o",
         plantilla,
         "--no-playlist",
@@ -60,12 +69,16 @@ def ejecutar_descarga(query_completa: str) -> tuple[bool, str, str | None]:
     except subprocess.TimeoutExpired:
         return False, f"Tiempo agotado ({config.DESCARGAS_TIMEOUT_SEC}s).", None
     except FileNotFoundError:
-        return False, "yt-dlp no encontrado (instala el paquete o la imagen Docker actualizada).", None
+        return False, _mensaje_dependencia_yt_dlp(), None
     except Exception as exc:
         return False, str(exc)[:500], None
 
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "Error desconocido").strip()[:800]
+        if "No module named yt_dlp" in err:
+            return False, _mensaje_dependencia_yt_dlp(), None
+        if cmd_base[:2] == [sys.executable, "-m"]:
+            err = f"(Ejecutado con {sys.executable} -m yt_dlp)\n{err}"
         return False, err, None
 
     reciente = _archivo_mas_reciente(config.DESCARGAS_DIR)

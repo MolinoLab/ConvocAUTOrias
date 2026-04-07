@@ -106,12 +106,31 @@ from src.db_funcionalidad import (
     listar as listar_func,
     añadir as añadir_func,
 )
+from src.tuya_client import (
+    obtener_estado_enchufe,
+    obtener_ultimo_error_tuya,
+    poner_enchufe,
+)
+from src.bambulab_client import (
+    apagar_impresora,
+    obtener_estado_impresion,
+    obtener_ultimo_error_bambu,
+)
 
 
 class FuncionalidadRequest(BaseModel):
     texto: str
     prioridad: int = Field(ge=1, le=5)
     estado: Optional[str] = "pendiente"
+
+
+class SmartPlugRequest(BaseModel):
+    on: bool
+    device_id: Optional[str] = None
+
+
+class BambuPowerOffRequest(BaseModel):
+    confirmar: bool = False
 
 
 @app.get("/funcionalidad")
@@ -146,3 +165,37 @@ def post_funcionalidad(req: FuncionalidadRequest):
 def health():
     """Health check."""
     return {"status": "ok"}
+
+
+@app.get("/smartplug/estado")
+def smartplug_estado():
+    ok, msg = obtener_estado_enchufe()
+    if not ok:
+        return {"success": False, "error": obtener_ultimo_error_tuya() or "Error Tuya."}
+    return {"success": True, "message": msg}
+
+
+@app.post("/smartplug/set")
+def smartplug_set(req: SmartPlugRequest):
+    ok, msg = poner_enchufe(req.on, device_id=req.device_id)
+    if not ok:
+        return {"success": False, "error": obtener_ultimo_error_tuya() or "Error Tuya."}
+    return {"success": True, "message": msg}
+
+
+@app.get("/bambu/estado")
+def bambu_estado():
+    ok, msg = obtener_estado_impresion()
+    if not ok:
+        return {"success": False, "error": obtener_ultimo_error_bambu() or "Error BambuLab."}
+    return {"success": True, "message": msg}
+
+
+@app.post("/bambu/apagar")
+def bambu_apagar(req: BambuPowerOffRequest):
+    if not req.confirmar:
+        return {"success": False, "error": "Debes enviar confirmar=true para apagar."}
+    ok, msg = apagar_impresora()
+    if not ok:
+        return {"success": False, "error": obtener_ultimo_error_bambu() or "Error apagando impresora."}
+    return {"success": True, "message": msg}
