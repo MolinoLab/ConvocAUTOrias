@@ -27,6 +27,32 @@ def _mensaje_dependencia_yt_dlp() -> str:
     )
 
 
+def _mensaje_youtube_bloqueado() -> str:
+    return (
+        "YouTube está pidiendo validación anti-bot.\n"
+        "Configura cookies exportadas en .env con DESCARGA_YTDLP_COOKIES_FILE y reintenta.\n"
+        "Ejemplo: DESCARGA_YTDLP_COOKIES_FILE=/app/data/youtube_cookies.txt"
+    )
+
+
+def _mensaje_js_runtime() -> str:
+    return (
+        "yt-dlp avisa que falta runtime JavaScript para YouTube.\n"
+        "Instala Node/Deno y define DESCARGA_YTDLP_JS_RUNTIMES (ej. node)."
+    )
+
+
+def _aplicar_flags_youtube(cmd: list[str]) -> list[str]:
+    out = list(cmd)
+    cookies_file = (config.DESCARGA_YTDLP_COOKIES_FILE or "").strip()
+    if cookies_file:
+        out.extend(["--cookies", cookies_file])
+    js_runtimes = (config.DESCARGA_YTDLP_JS_RUNTIMES or "").strip()
+    if js_runtimes:
+        out.extend(["--js-runtimes", js_runtimes])
+    return out
+
+
 def normalizar_entrada_descarga(texto: str) -> str:
     s = (texto or "").strip()
     if not s:
@@ -58,6 +84,7 @@ def ejecutar_descarga(query_completa: str) -> tuple[bool, str, str | None]:
         f"--max-filesize={config.DESCARGAS_MAX_MB}M",
         q,
     ]
+    cmd = _aplicar_flags_youtube(cmd)
     try:
         proc = subprocess.run(
             cmd,
@@ -77,6 +104,11 @@ def ejecutar_descarga(query_completa: str) -> tuple[bool, str, str | None]:
         err = (proc.stderr or proc.stdout or "Error desconocido").strip()[:800]
         if "No module named yt_dlp" in err:
             return False, _mensaje_dependencia_yt_dlp(), None
+        err_low = err.lower()
+        if "sign in to confirm you’re not a bot" in err_low or "sign in to confirm you're not a bot" in err_low:
+            return False, f"{_mensaje_youtube_bloqueado()}\n\nDetalle:\n{err}", None
+        if "no supported javascript runtime could be found" in err_low:
+            return False, f"{_mensaje_js_runtime()}\n\nDetalle:\n{err}", None
         if cmd_base[:2] == [sys.executable, "-m"]:
             err = f"(Ejecutado con {sys.executable} -m yt_dlp)\n{err}"
         return False, err, None

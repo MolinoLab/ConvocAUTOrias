@@ -219,6 +219,8 @@ DESCARGAS_DIR.mkdir(parents=True, exist_ok=True)
 DESCARGAS_TIMEOUT_SEC = max(60, int(os.getenv("DESCARGAS_TIMEOUT_SEC", "600")))
 DESCARGAS_MAX_MB = max(1, int(os.getenv("DESCARGAS_MAX_MB", "500")))
 DESCARGA_ENVIAR_TELEGRAM_MAX_MB = max(0, int(os.getenv("DESCARGA_ENVIAR_TELEGRAM_MAX_MB", "45")))
+DESCARGA_YTDLP_COOKIES_FILE = os.getenv("DESCARGA_YTDLP_COOKIES_FILE", "").strip()
+DESCARGA_YTDLP_JS_RUNTIMES = os.getenv("DESCARGA_YTDLP_JS_RUNTIMES", "").strip()
 
 # Tuya Cloud (enchufe smart)
 TUYA_CLIENT_ID = os.getenv("TUYA_CLIENT_ID", "").strip()
