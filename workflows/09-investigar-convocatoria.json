@@ -1,0 +1,48 @@
+{
+  "name": "ConvocAUTOrias - Investigar convocatoria",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [260, 280]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://api:8888/investigar-convocatoria",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"url\": \"https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html\",\n  \"query\": \"\",\n  \"modo\": \"manual\",\n  \"chat_id\": \"\"\n}"
+      },
+      "id": "http-investigar-convocatoria",
+      "name": "Llamar API investigar convocatoria",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [520, 280]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Llamar API investigar convocatoria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "timezone": "Europe/Madrid"
+  },
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

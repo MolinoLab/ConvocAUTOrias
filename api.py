@@ -2,9 +2,10 @@
 API mínima para que n8n y OpenClaw invoquen las tareas del proyecto vía HTTP.
 Endpoints: POST /scrape, POST /revisar, POST /notificar-agenda-manana, POST /notificar-agenda-semana,
            POST /sync-caldav, POST /indexar-ideas, POST /sync-nextcloud-datos, POST /generar-borrador,
-           POST /procesar-investigaciones,
+           POST /procesar-investigaciones, POST /investigar-convocatoria,
            GET /funcionalidad, POST /funcionalidad
 """
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,18 @@ def _run_script(module: str, *args: str) -> dict:
     }
 
 
+def _parse_json_stdout(stdout: str) -> dict | None:
+    lines = [x.strip() for x in (stdout or "").splitlines() if x.strip()]
+    for line in reversed(lines):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
 @app.post("/scrape")
 def scrape():
     """Ejecuta un ciclo del worker scraper (--once)."""
@@ -48,6 +61,40 @@ def scrape():
 def procesar_investigaciones():
     """Procesa investigaciones pendientes (búsqueda + Ollama + Telegram)."""
     return _run_script("scripts.procesar_investigaciones", "--once")
+
+
+class InvestigarConvocatoriaRequest(BaseModel):
+    url: Optional[str] = ""
+    query: Optional[str] = ""
+    modo: Optional[str] = "manual"
+    chat_id: Optional[str] = ""
+
+
+@app.post("/investigar-convocatoria")
+def investigar_convocatoria(req: InvestigarConvocatoriaRequest):
+    """Investiga una convocatoria y genera resumen estructurado (MD+JSON)."""
+    args: list[str] = []
+    if (req.url or "").strip():
+        args.extend(["--url", (req.url or "").strip()])
+    if (req.query or "").strip():
+        args.extend(["--query", (req.query or "").strip()])
+    if (req.chat_id or "").strip():
+        args.extend(["--chat-id", (req.chat_id or "").strip()])
+
+    result = _run_script("scripts.procesar_convocatoria", *args)
+    parsed = _parse_json_stdout(result.get("stdout", ""))
+    if parsed is None:
+        return {
+            "success": False,
+            "error": "No se pudo parsear la salida del script.",
+            "modo": req.modo or "manual",
+            "raw": result,
+        }
+    parsed["modo"] = req.modo or "manual"
+    parsed["success"] = bool(parsed.get("success"))
+    if not parsed["success"]:
+        parsed["stderr_trail"] = result.get("stderr_trail", "")
+    return parsed
 
 
 @app.post("/revisar")

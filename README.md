@@ -261,6 +261,13 @@ Sincronizacion con Nextcloud:
 - El workflow `05-sync-nextcloud-datos.json` llama al endpoint `POST /sync-nextcloud-datos`.
 - Sube `data/convocatorias.csv`, `data/ideas.csv`, `data/enlaces.csv` (si existe) y los ficheros de `data/ideas/` a `{NEXTCLOUD_VAULT_BASE}/Ideas` (y el resto de categorías según `config.py`).
 
+Investigación estructurada de convocatorias:
+- Endpoint API: `POST /investigar-convocatoria`.
+- Request JSON (mínimo): `{"url":"https://...","query":"","modo":"manual","chat_id":""}` (usa `url` o `query`).
+- Respuesta: `success`, `resultado_id`, `ruta_markdown`, `ruta_json`, `resumen_corto`, `fuentes_count`, `warning`.
+- Persistencia: `data/resumenes_convocatoria/{id}.md`, `data/resumenes_convocatoria/{id}.json` e índice `data/resumenes_convocatoria.csv`.
+- Limitación actual: extracción de ejemplos de beneficiarios desde HTML; los anexos PDF quedan marcados como pendiente de fase PDF.
+
 ## OpenClaw (asistente conversacional)
 
 OpenClaw es un asistente IA de código abierto que funciona como interfaz conversacional para ConvocAUTOrias. Usa exclusivamente Ollama (sin APIs de pago) y llama a la API interna mediante skills.
@@ -288,7 +295,7 @@ OpenClaw es un asistente IA de código abierto que funciona como interfaz conver
 
 ### Skills
 
-Las skills de ConvocAUTOrias están en `openclaw/workspace/skills/convocautorias/SKILL.md`. Enseñan al agente a usar los endpoints de la API (`/scrape`, `/revisar`, `/sync-caldav`, `/indexar-ideas`, `/sync-nextcloud-datos`, `/generar-borrador`).
+Las skills de ConvocAUTOrias están en `openclaw/workspace/skills/convocautorias/SKILL.md`. Enseñan al agente a usar los endpoints de la API (`/scrape`, `/revisar`, `/sync-caldav`, `/indexar-ideas`, `/sync-nextcloud-datos`, `/generar-borrador`, `/investigar-convocatoria`).
 
 Si editas una skill, OpenClaw la recarga automáticamente en el siguiente turno (con `watch: true` en la configuración).
 

@@ -22,6 +22,7 @@ Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API
 | `06-notificar-agenda-manana.json` | Eventos y tareas (Deck + VTODO) para el día siguiente; Telegram si hay ítems | Diario 18:00 (TZ workflow: Europe/Madrid) |
 | `07-procesar-investigaciones.json` | Procesa cola `/investiga`: búsqueda web (Python), Ollama, Markdown y Telegram | 09:00 y 21:00 (TZ: Europe/Madrid) |
 | `08-notificar-agenda-semana.json` | Resumen lunes–domingo siguiente (CalDAV + Deck + VTODO) | Domingo 21:00 (TZ: Europe/Madrid) |
+| `09-investigar-convocatoria.json` | Disparo manual para investigar una convocatoria y generar resumen estructurado (MD+JSON) | Manual |
 
 ## Requisitos
 
@@ -36,3 +37,4 @@ Estos workflows orquestan las tareas periódicas del sistema. n8n llama a la API
 - El workflow **06** define `settings.timezone: Europe/Madrid` para que las 18:00 sean hora peninsular; el script usa `APP_TIMEZONE` (misma zona que `/info`). La API debe tener `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID` (y opcionalmente `TELEGRAM_NOTIFY_CHAT_IDS` para más destinatarios).
 - El workflow **08** envía el resumen semanal a los mismos chats (`TELEGRAM_CHAT_ID` + `TELEGRAM_NOTIFY_CHAT_IDS`). Usa `CALDAV_CALENDAR_NAME` con varios nombres separados por coma para mezclar calendario común y personal.
 - El workflow **07** usa la misma zona horaria. El script limita cuántas investigaciones trata por ejecución (`MAX_INVESTIGACIONES_POR_CICLO`) y pausa entre pasos; evita lanzar varias ejecuciones del workflow a la vez si tu n8n lo permite (cola / sin solapes).
+- El workflow **09** llama al endpoint `POST /investigar-convocatoria`. En esta fase, la extracción de ejemplos se basa en HTML y deja trazas de advertencia cuando una fuente relevante está en PDF (fase futura).
