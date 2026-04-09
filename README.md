@@ -25,7 +25,7 @@ pip install -r requirements.txt
    python -m bot.telegram_bot
    ```
    Comandos principales: `/convo <url>`, `/url <url>`, `/listconvo`, `/listurl`, `/idea <texto>`, `/func <texto> [prioridad]`, `/ayuda`.
-   Una URL suelta (sin comando) se guarda en `data/enlaces.csv`. Convocatorias solo con `/convo`. Si envías un audio, el bot lo transcribe y lo guarda como idea.
+   Una URL suelta (sin comando) se guarda en `data/enlaces.csv`. Convocatorias solo con `/convo` (alta rápida con estado `pendiente_investigacion`; la investigación profunda la hace el worker vía `POST /scrape` / workflow n8n **01**). Si envías un audio, el bot lo transcribe y lo guarda como idea.
 
    **Atajos de comandos (Telegram)** — mismos handlers que los comandos largos; la lista detallada está aquí para no alargar `/ayuda`:
 
@@ -155,6 +155,13 @@ OLLAMA_MODEL=phi3:mini
 # INVESTIGACION_FETCH_TOP=2
 # MAX_INVESTIGACIONES_POR_CICLO=3
 # INVESTIGACION_SLEEP_SEC=4
+# Investigación profunda convocatorias (worker + Ollama detalle ayuda)
+# OLLAMA_MODEL_CONVOCATORIA=phi3:mini
+# TIMEOUT_OLLAMA_CONVOCATORIA=120
+# MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO=2
+# CONVOCATORIA_MAX_INVESTIGACION_INTENTOS=5
+# CONVOCATORIA_INVESTIGACION_COOLDOWN_SEC=3600
+# NOTIFY_TELEGRAM_INVESTIGACION_CONVOCATORIA=false
 
 # Whisper (transcripcion de audio)
 WHISPER_MODEL=base
@@ -262,11 +269,13 @@ Sincronizacion con Nextcloud:
 - Sube `data/convocatorias.csv`, `data/ideas.csv`, `data/enlaces.csv` (si existe) y los ficheros de `data/ideas/` a `{NEXTCLOUD_VAULT_BASE}/Ideas` (y el resto de categorías según `config.py`).
 
 Investigación estructurada de convocatorias:
-- Endpoint API: `POST /investigar-convocatoria`.
+- **`/convo <url>`**: alta rápida en `convocatorias.csv` con estado `pendiente_investigacion` (sin scraping en el bot). El workflow **01** (`POST /scrape`) procesa hasta `MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO` convocatorias por ejecución y pasa el estado a `investigacion_ok` o `investigacion_parcial` (reintentos con `CONVOCATORIA_INVESTIGACION_COOLDOWN_SEC` y tope `CONVOCATORIA_MAX_INVESTIGACION_INTENTOS`).
+- Estados en seguimiento (`/listconvo`, CalDAV, revisión de plazos): `pendiente`, `pendiente_investigacion`, `investigacion_ok`, `investigacion_parcial`.
+- Endpoint API: `POST /investigar-convocatoria` (investigación puntual; el worker no añade fila al índice global de resúmenes para no duplicar entradas).
 - Request JSON (mínimo): `{"url":"https://...","query":"","modo":"manual","chat_id":""}` (usa `url` o `query`).
-- Respuesta: `success`, `resultado_id`, `ruta_markdown`, `ruta_json`, `resumen_corto`, `fuentes_count`, `warning`.
-- Persistencia: `data/resumenes_convocatoria/{id}.md`, `data/resumenes_convocatoria/{id}.json` e índice `data/resumenes_convocatoria.csv`.
-- Limitación actual: extracción de ejemplos de beneficiarios desde HTML; los anexos PDF quedan marcados como pendiente de fase PDF.
+- Variables opcionales: `OLLAMA_MODEL_CONVOCATORIA`, `TIMEOUT_OLLAMA_CONVOCATORIA`, `MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO`, `NOTIFY_TELEGRAM_INVESTIGACION_CONVOCATORIA` (`true`/`1` para avisar al completar cada convocatoria en el worker).
+- Persistencia: `data/resumenes_convocatoria/{id}.md`, `data/resumenes_convocatoria/{id}.json` (id estable por fila de convocatoria en el worker).
+- Limitación actual: ejemplos de beneficiarios vía HTML; anexos PDF pendientes de fase PDF.
 
 ## OpenClaw (asistente conversacional)
 

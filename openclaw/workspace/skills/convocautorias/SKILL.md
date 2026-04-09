@@ -14,15 +14,17 @@ Todas las peticiones se hacen a **`http://api:8888`**. No requiere autenticació
 
 ## Acciones disponibles
 
-### Buscar nuevas convocatorias (scraping)
+### Procesar cola de investigación profunda de convocatorias
 
-Cuando el usuario pida buscar, rastrear o actualizar convocatorias desde fuentes web:
+Cuando el usuario pida actualizar o enriquecer convocatorias guardadas (estado `pendiente_investigacion` / `investigacion_parcial`):
 
 ```
 POST http://api:8888/scrape
 ```
 
-No requiere cuerpo. Devuelve JSON con `success`, `stdout` y `stderr`.
+No requiere cuerpo. Ejecuta un ciclo del worker (hasta `MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO` ítems). Devuelve JSON con `success`, `stdout` y `stderr`.
+
+Para una URL concreta sin pasar por el CSV, usar `POST http://api:8888/investigar-convocatoria` con JSON `url` / `query`.
 
 ### Revisar plazos y enviar notificaciones
 
@@ -96,7 +98,7 @@ Todos los endpoints devuelven JSON con esta estructura:
 ## Ejemplos de uso
 
 - "Revisa los plazos" → llama a `POST /revisar`
-- "Busca nuevas convocatorias" → llama a `POST /scrape`
+- "Procesa la cola de convocatorias pendientes de investigación" → llama a `POST /scrape`
 - "Sincroniza el calendario" → llama a `POST /sync-caldav`
 - "Indexa las ideas nuevas" → llama a `POST /indexar-ideas`
 - "Sube todo a Nextcloud" → llama a `POST /sync-nextcloud-datos`

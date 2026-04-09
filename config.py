@@ -275,6 +275,16 @@ INVESTIGACION_SLEEP_SEC = max(0.0, float(os.getenv("INVESTIGACION_SLEEP_SEC", "4
 TIMEOUT_OLLAMA_INVESTIGACION = max(30, int(os.getenv("TIMEOUT_OLLAMA_INVESTIGACION", "180")))
 TIMEOUT_BUSQUEDA_INVESTIGACION = max(5, int(os.getenv("TIMEOUT_BUSQUEDA_INVESTIGACION", "25")))
 
+# Investigación profunda de convocatorias (worker + /investigar-convocatoria)
+_ollama_conv = os.getenv("OLLAMA_MODEL_CONVOCATORIA", "").strip()
+OLLAMA_MODEL_CONVOCATORIA = _ollama_conv if _ollama_conv else OLLAMA_MODEL
+TIMEOUT_OLLAMA_CONVOCATORIA = max(60, int(os.getenv("TIMEOUT_OLLAMA_CONVOCATORIA", "120")))
+CONVOCATORIA_MAX_INVESTIGACION_INTENTOS = max(1, int(os.getenv("CONVOCATORIA_MAX_INVESTIGACION_INTENTOS", "5")))
+CONVOCATORIA_INVESTIGACION_COOLDOWN_SEC = max(60, int(os.getenv("CONVOCATORIA_INVESTIGACION_COOLDOWN_SEC", "3600")))
+MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO = max(1, int(os.getenv("MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO", "2")))
+_notify_inv_convo = os.getenv("NOTIFY_TELEGRAM_INVESTIGACION_CONVOCATORIA", "").strip().lower()
+NOTIFY_TELEGRAM_INVESTIGACION_CONVOCATORIA = _notify_inv_convo in ("1", "true", "yes", "on")
+
 # Migración ligera desde instalaciones previas (solo convocatorias.csv)
 _csv_legacy = DIR_PROYECTO / "convocatorias.csv"
 if not CSV_CONVOCATORIAS.exists() and _csv_legacy.exists():

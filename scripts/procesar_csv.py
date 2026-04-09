@@ -79,9 +79,13 @@ def procesar_fila(fila: list) -> dict | None:
         "descripcion": descripcion,
         "plazo_fin": fecha,  # Texto; parseo inteligente en fases posteriores
         "requisitos": requisitos,
-        "estado": "pendiente",
+        "estado": "pendiente_investigacion",
         "fecha_ingesta": datetime.now().isoformat(),
         "fuente": "csv",
+        "investigacion_id": "",
+        "investigacion_fecha": "",
+        "investigacion_version": "",
+        "investigacion_intentos": "0",
     }
 
 
@@ -111,7 +115,21 @@ def main():
         print("Error: No se pudo decodificar el CSV con los encodings probados.")
         return 1
 
-    campos = ["id", "url", "titulo", "descripcion", "plazo_fin", "requisitos", "estado", "fecha_ingesta", "fuente"]
+    campos = [
+        "id",
+        "url",
+        "titulo",
+        "descripcion",
+        "plazo_fin",
+        "requisitos",
+        "estado",
+        "fecha_ingesta",
+        "fuente",
+        "investigacion_id",
+        "investigacion_fecha",
+        "investigacion_version",
+        "investigacion_intentos",
+    ]
 
     with open(CSV_DESTINO, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=campos)

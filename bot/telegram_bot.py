@@ -30,6 +30,7 @@ from src.db import (
     actualizar as actualizar_convocatoria_registro,
     buscar_por_id,
     eliminar_por_id,
+    es_convocatoria_en_seguimiento,
     listar,
 )
 from src.db_ideas import (
@@ -170,7 +171,6 @@ from src.fechas_proyecto import (
     parsear_solo_fecha,
 )
 from src.plazo import es_futura, clave_orden, parsear_plazo
-from src.scraper import extraer
 from src.fecha_display import (
     extraer_cuerpo_y_fecha_dia_para_el,
     extraer_fecha_natural_dd_mm_yyyy_y_resto,
@@ -839,7 +839,7 @@ async def cmd_convo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _obtener_futuras_ordenadas() -> list[Convocatoria]:
     """Filtra convocatorias pendientes futuras y las ordena por proximidad."""
-    pendientes = [c for c in listar() if c.estado == "pendiente"]
+    pendientes = [c for c in listar() if es_convocatoria_en_seguimiento(c.estado)]
     futuras = [c for c in pendientes if es_futura(c.plazo_fin)]
     futuras.sort(key=lambda c: clave_orden(c.plazo_fin))
     return futuras
@@ -860,7 +860,7 @@ async def cmd_listar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     futuras = _obtener_futuras_ordenadas()
 
     if not futuras:
-        total_pendientes = sum(1 for c in listar() if c.estado == "pendiente")
+        total_pendientes = sum(1 for c in listar() if es_convocatoria_en_seguimiento(c.estado))
         if total_pendientes:
             await update.message.reply_text(
                 f"No hay convocatorias futuras.\n"
@@ -5960,32 +5960,23 @@ async def _procesar_url(update: Update, url: str) -> None:
         await msg.edit_text(f"Esta convocatoria ya está en la lista:\n{existente.titulo}")
         return
 
-    # Intentar extraer datos
-    datos = extraer(url)
-    if datos:
-        conv = Convocatoria(
-            id=id_conv,
-            url=url,
-            titulo=datos.titulo or url,
-            descripcion=datos.descripcion,
-            plazo_fin=datos.plazo_fin,
-            requisitos="",
-            estado="pendiente",
-            fecha_ingesta=datetime.now().isoformat(),
-            fuente="telegram",
-        )
-    else:
-        conv = Convocatoria(
-            id=id_conv,
-            url=url,
-            titulo=url,
-            descripcion="",
-            plazo_fin="",
-            requisitos="",
-            estado="pendiente",
-            fecha_ingesta=datetime.now().isoformat(),
-            fuente="telegram",
-        )
+    part = url.rstrip("/").split("/")[-1]
+    titulo_ini = (
+        part.replace("-", " ").replace("_", " ").replace("%20", " ")[:120]
+        if part
+        else url[:120]
+    )
+    conv = Convocatoria(
+        id=id_conv,
+        url=url,
+        titulo=titulo_ini or url[:120],
+        descripcion="",
+        plazo_fin="",
+        requisitos="",
+        estado="pendiente_investigacion",
+        fecha_ingesta=datetime.now().isoformat(),
+        fuente="telegram",
+    )
 
     añadir(conv)
     titulo_show = (conv.titulo[:60] + "...") if len(conv.titulo) > 60 else conv.titulo

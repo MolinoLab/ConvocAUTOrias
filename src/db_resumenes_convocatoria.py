@@ -29,7 +29,7 @@ CAMPOS_INDICE = [
 ]
 
 
-def guardar_resultado(resultado: dict) -> dict[str, str]:
+def guardar_resultado(resultado: dict, *, append_indice: bool = True) -> dict[str, str]:
     meta = resultado.get("metadata", {})
     rid = str(meta.get("resultado_id", "")).strip()
     if not rid:
@@ -47,18 +47,19 @@ def guardar_resultado(resultado: dict) -> dict[str, str]:
     )
     ruta_md.write_text(markdown, encoding="utf-8")
 
-    _append_indice(
-        {
-            "id": rid,
-            "fecha": str(meta.get("creado_en", "")),
-            "nombre": str(resultado.get("convocatoria_actual", {}).get("nombre", "")),
-            "url_objetivo": str(resultado.get("convocatoria_actual", {}).get("url_objetivo", "")),
-            "ruta_json": str(ruta_json),
-            "ruta_markdown": str(ruta_md),
-            "fuentes_count": str(len(resultado.get("fuentes", []))),
-            "warning": "sí" if bool(resultado.get("advertencias")) else "no",
-        }
-    )
+    if append_indice:
+        _append_indice(
+            {
+                "id": rid,
+                "fecha": str(meta.get("creado_en", "")),
+                "nombre": str(resultado.get("convocatoria_actual", {}).get("nombre", "")),
+                "url_objetivo": str(resultado.get("convocatoria_actual", {}).get("url_objetivo", "")),
+                "ruta_json": str(ruta_json),
+                "ruta_markdown": str(ruta_md),
+                "fuentes_count": str(len(resultado.get("fuentes", []))),
+                "warning": "sí" if bool(resultado.get("advertencias")) else "no",
+            }
+        )
 
     return {"ruta_json": str(ruta_json), "ruta_markdown": str(ruta_md)}
 

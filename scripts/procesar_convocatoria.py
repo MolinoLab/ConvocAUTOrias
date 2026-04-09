@@ -16,13 +16,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db_resumenes_convocatoria import guardar_resultado
-from src.investigacion_convocatoria import (
-    descubrir_ediciones_anteriores,
-    extraer_datos_clave_desde_html,
-    extraer_ejemplos_previos_html,
-    generar_resumen_estructurado,
-    resolver_convocatoria_objetivo,
-)
+from src.investigacion_convocatoria import construir_investigacion_convocatoria, resolver_convocatoria_objetivo
 from src.notifier import enviar_mensaje
 
 
@@ -31,7 +25,14 @@ def _resultado_id(url_objetivo: str, query: str) -> str:
     return hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
 
 
-def ejecutar(url: str | None, query: str | None, chat_id: str | None) -> dict:
+def ejecutar(
+    url: str | None,
+    query: str | None,
+    chat_id: str | None,
+    *,
+    resultado_id: str | None = None,
+    append_indice: bool = True,
+) -> dict:
     target = resolver_convocatoria_objetivo(url, query)
     objetivo = (target.get("url") or "").strip()
     if not objetivo:
@@ -41,24 +42,12 @@ def ejecutar(url: str | None, query: str | None, chat_id: str | None) -> dict:
             "target": target,
         }
 
-    convocatoria_actual, fuentes_1, adv_1 = extraer_datos_clave_desde_html(objetivo)
-    ediciones = descubrir_ediciones_anteriores(objetivo)
-    ejemplos, adv_2, fuentes_2 = extraer_ejemplos_previos_html(ediciones)
+    rid = resultado_id or _resultado_id(objetivo, query or "")
+    resultado = construir_investigacion_convocatoria(objetivo, rid, query=query or "")
+    fuentes = resultado.get("fuentes") or []
+    advertencias = resultado.get("advertencias") or []
 
-    rid = _resultado_id(objetivo, query or "")
-    fuentes = _dedup_fuentes(fuentes_1 + fuentes_2)
-    advertencias = adv_1 + adv_2
-
-    resultado = generar_resumen_estructurado(
-        convocatoria_actual=convocatoria_actual,
-        ediciones_anteriores=ediciones,
-        ejemplos_financiados=ejemplos,
-        advertencias=advertencias,
-        fuentes=fuentes,
-        resultado_id=rid,
-    )
-
-    rutas = guardar_resultado(resultado)
+    rutas = guardar_resultado(resultado, append_indice=append_indice)
     resumen_corto = resultado.get("metadata", {}).get("resumen_corto", "")
 
     if chat_id and resumen_corto:
@@ -78,18 +67,6 @@ def ejecutar(url: str | None, query: str | None, chat_id: str | None) -> dict:
         "fuentes_count": len(fuentes),
         "warning": "; ".join(advertencias[:3]) if advertencias else "",
     }
-
-
-def _dedup_fuentes(fuentes: list[dict]) -> list[dict]:
-    seen: set[str] = set()
-    out: list[dict] = []
-    for f in fuentes:
-        u = (f.get("url") or "").strip()
-        if not u or u in seen:
-            continue
-        seen.add(u)
-        out.append(f)
-    return out
 
 
 def main() -> int:

@@ -8,14 +8,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.db import listar
+from src.db import es_convocatoria_en_seguimiento, listar
 from src.notifier import enviar_mensaje
 from src.plazo import parsear_plazo
 
 
 def main():
     convocatorias = listar()
-    pendientes = [c for c in convocatorias if c.estado == "pendiente"]
+    pendientes = [c for c in convocatorias if es_convocatoria_en_seguimiento(c.estado)]
 
     if not pendientes:
         print("No hay convocatorias pendientes.")

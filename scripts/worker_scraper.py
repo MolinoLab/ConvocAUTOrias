@@ -1,106 +1,134 @@
 """
-Worker que scrapea periódicamente las URLs de convocatorias y las enriquece con IA (Ollama).
-Actualiza título, descripción, plazo_fin y requisitos en la base de datos.
+Worker periódico: investigación profunda de convocatorias pendientes (CSV/SQLite).
+Sustituye el antiguo scrape + Ollama mínimo por el pipeline unificado en
+src.investigacion_convocatoria (construir_investigacion_convocatoria).
 
 Uso:
   python -m scripts.worker_scraper        # Bucle infinito cada 6h
-  python -m scripts.worker_scraper --once # Un solo ciclo y termina (para n8n/cron)
+  python -m scripts.worker_scraper --once # Un solo ciclo (n8n/cron)
 """
+from __future__ import annotations
+
 import argparse
-import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from src.db import listar, actualizar
-from src.scraper import extraer
+from src.db import (
+    Convocatoria,
+    actualizar,
+    listar_pendientes_investigacion,
+    resultado_id_estable_para_convocatoria,
+)
+from src.db_resumenes_convocatoria import guardar_resultado
+from src.investigacion_convocatoria import construir_investigacion_convocatoria
+from src.notifier import enviar_mensaje_a_chats
 
 INTERVALO_HORAS = 6
-TIMEOUT_OLLAMA = 90
 
 
-def _analizar_con_ollama(titulo: str, contenido: str) -> dict | None:
-    """
-    Envía el contenido a Ollama para extraer plazo_fin, requisitos y resumen.
-    Retorna dict con las claves o None si falla.
-    """
-    if not contenido or len(contenido.strip()) < 50:
-        return None
-    try:
-        import requests
-    except ImportError:
-        return None
-    prompt = f"""Analiza esta convocatoria y extrae la información en formato JSON.
+def _mapear_resultado_a_conv(
+    conv: Convocatoria,
+    resultado: dict,
+    rutas: dict[str, str],
+) -> Convocatoria:
+    ca = resultado.get("convocatoria_actual") or {}
+    det = resultado.get("detalle_ayuda") or {}
+    meta = resultado.get("metadata") or {}
+    adv = resultado.get("advertencias") or []
 
-Título: {titulo[:200]}
+    titulo = (ca.get("nombre") or "").strip()
+    if titulo:
+        conv.titulo = titulo[:500]
 
-Contenido:
-{contenido[:4000]}
+    plazo = (ca.get("plazo") or "").strip()
+    if plazo:
+        conv.plazo_fin = plazo[:2000]
 
-Responde ÚNICAMENTE con un JSON válido con estas claves (usa strings vacíos si no encuentras):
-- "plazo_fin": fecha límite o plazo de presentación
-- "requisitos": requisitos principales para optar
-- "resumen": resumen en 1-2 frases
+    ben = (ca.get("beneficiarios") or "").strip()
+    if ben:
+        conv.requisitos = ben[:4000]
 
-Ejemplo: {{"plazo_fin": "15 de noviembre", "requisitos": "Entidad sin ánimo de lucro", "resumen": "Ayudas para proyectos culturales."}}"""
-    try:
-        r = requests.post(
-            f"{config.OLLAMA_URL.rstrip('/')}/api/generate",
-            json={
-                "model": config.OLLAMA_MODEL,
-                "prompt": prompt,
-                "stream": False,
-            },
-            timeout=TIMEOUT_OLLAMA,
-        )
-        if r.status_code != 200:
-            return None
-        texto = r.json().get("response", "").strip()
-        # Intentar extraer JSON del texto (puede venir con markdown o texto extra)
-        inicio = texto.find("{")
-        fin = texto.rfind("}") + 1
-        if inicio >= 0 and fin > inicio:
-            return json.loads(texto[inicio:fin])
-    except Exception:
-        pass
-    return None
+    parts: list[str] = []
+    re = (det.get("resumen_ejecutivo") or "").strip()
+    if re:
+        parts.append(re[:4000])
+    pres = (ca.get("presupuesto") or "").strip()
+    if pres:
+        parts.append(f"Presupuesto: {pres[:800]}")
+    if parts:
+        conv.descripcion = "\n\n".join(parts)[:8000]
+
+    pie = f"\n\n[Resumen profundo] {rutas.get('ruta_markdown', '')}"
+    base_desc = (conv.descripcion or "").strip()
+    if len(base_desc) + len(pie) < 9500:
+        conv.descripcion = (base_desc + pie).strip()
+
+    conv.investigacion_id = str(meta.get("resultado_id", "") or "")
+    conv.investigacion_fecha = str(meta.get("creado_en", "") or "")
+    conv.investigacion_version = str(meta.get("version_pipeline", "") or "")
+
+    critico = any(
+        "No se pudo descargar o parsear la ficha objetivo" in (a or "") for a in adv
+    )
+    sin_titulo = not titulo
+
+    prev = int((conv.investigacion_intentos or "0").strip() or "0")
+    if critico and sin_titulo:
+        conv.estado = "investigacion_parcial"
+        conv.investigacion_intentos = str(prev + 1)
+    else:
+        conv.estado = "investigacion_ok"
+        conv.investigacion_intentos = "0"
+
+    return conv
+
+
+def _procesar_una(conv: Convocatoria) -> bool:
+    if not conv.url or not conv.url.startswith("http"):
+        return False
+    rid = resultado_id_estable_para_convocatoria(conv.id)
+    resultado = construir_investigacion_convocatoria(conv.url.strip(), rid, query="")
+    rutas = guardar_resultado(resultado, append_indice=False)
+    conv2 = _mapear_resultado_a_conv(conv, resultado, rutas)
+    ok = actualizar(conv2)
+    if ok and config.NOTIFY_TELEGRAM_INVESTIGACION_CONVOCATORIA:
+        titulo = (conv2.titulo or conv.url)[:80]
+        resumen = (resultado.get("metadata") or {}).get("resumen_corto", "")[:300]
+        msg = (
+            f"Investigación convocatoria completada.\n{titulo}\n\n{resumen}\n{rutas.get('ruta_markdown', '')}"
+        )[:3900]
+        enviar_mensaje_a_chats(msg)
+    return ok
 
 
 def _ejecutar_ciclo() -> int:
-    """Ejecuta un ciclo de scraping y análisis. Retorna número de convocatorias actualizadas."""
-    convocatorias = listar()
-    pendientes = [c for c in convocatorias if c.estado == "pendiente"]
-    actualizadas = 0
-    for conv in pendientes:
-        if not conv.url or not conv.url.startswith("http"):
-            continue
-        datos = extraer(conv.url)
-        if not datos:
-            continue
-        # Actualizar con datos del scraper
-        conv.titulo = datos.titulo or conv.titulo
-        conv.descripcion = datos.descripcion or conv.descripcion
-        conv.plazo_fin = datos.plazo_fin or conv.plazo_fin
-        # Intentar enriquecer con Ollama
-        analisis = _analizar_con_ollama(conv.titulo, datos.contenido)
-        if analisis:
-            if analisis.get("plazo_fin"):
-                conv.plazo_fin = analisis["plazo_fin"]
-            if analisis.get("requisitos"):
-                conv.requisitos = analisis["requisitos"]
-            if analisis.get("resumen") and not conv.descripcion:
-                conv.descripcion = analisis["resumen"]
-        if actualizar(conv):
-            actualizadas += 1
-        time.sleep(2)  # Pausa entre peticiones para no saturar
-    return actualizadas
+    candidatas = listar_pendientes_investigacion()
+    hechas = 0
+    limite = config.MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO
+    for conv in candidatas:
+        if hechas >= limite:
+            break
+        try:
+            if _procesar_una(conv):
+                hechas += 1
+        except Exception as e:
+            print(f"Error investigando id={conv.id}: {e}", flush=True)
+            conv.estado = "investigacion_parcial"
+            prev = int((conv.investigacion_intentos or "0").strip() or "0")
+            conv.investigacion_intentos = str(prev + 1)
+            conv.investigacion_fecha = datetime.now().isoformat()
+            actualizar(conv)
+        time.sleep(max(2, int(config.INVESTIGACION_SLEEP_SEC)))
+    return hechas
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Worker de scraping de convocatorias")
+    parser = argparse.ArgumentParser(description="Worker de investigación profunda de convocatorias")
     parser.add_argument(
         "--once",
         action="store_true",
@@ -111,18 +139,21 @@ def main() -> None:
     if args.once:
         try:
             n = _ejecutar_ciclo()
-            print(f"Ciclo completado. Actualizadas: {n}")
+            print(f"Ciclo completado. Investigadas: {n}")
         except Exception as e:
             print(f"Error en ciclo: {e}", file=sys.stderr)
             sys.exit(1)
         return
 
     intervalo_seg = INTERVALO_HORAS * 3600
-    print(f"Worker iniciado. Scraping cada {INTERVALO_HORAS}h. Ctrl+C para detener.")
+    print(
+        f"Worker convocatorias iniciado. Cada {INTERVALO_HORAS}h. "
+        f"Máx {config.MAX_CONVOCATORIAS_INVESTIGACION_POR_CICLO} por ciclo. Ctrl+C para detener."
+    )
     while True:
         try:
             n = _ejecutar_ciclo()
-            print(f"Ciclo completado. Actualizadas: {n}")
+            print(f"Ciclo completado. Investigadas: {n}")
         except KeyboardInterrupt:
             print("\nWorker detenido.")
             sys.exit(0)

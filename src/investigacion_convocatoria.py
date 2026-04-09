@@ -14,9 +14,12 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import json
+
 import requests
 from bs4 import BeautifulSoup
 
+import config
 from src.buscar_investigacion import buscar_fuentes
 from src.scraper import extraer
 
@@ -214,6 +217,142 @@ def extraer_ejemplos_previos_html(ediciones: list[dict[str, str]]) -> tuple[list
     return ejemplos[:10], advertencias, _deduplicar_fuentes(fuentes)
 
 
+def _parse_json_ollama(texto: str) -> dict | None:
+    texto = (texto or "").strip()
+    i = texto.find("{")
+    j = texto.rfind("}") + 1
+    if i < 0 or j <= i:
+        return None
+    try:
+        return json.loads(texto[i:j])
+    except json.JSONDecodeError:
+        return None
+
+
+def enriquecer_detalle_ayuda_ollama(
+    conv: dict[str, Any],
+    texto_contexto: str,
+    urls_permitidas: list[str],
+) -> tuple[dict[str, str], list[str]]:
+    """
+    Extrae gastos financiables, cofinanciación y documentación a partir del texto oficial.
+    Solo debe usar información implícita en el contexto; no inventar URLs.
+    """
+    advertencias: list[str] = []
+    vacio = {
+        "gastos_financiables": "",
+        "intensidad_cofinanciacion": "",
+        "documentacion_clave": "",
+        "resumen_ejecutivo": "",
+    }
+    if not texto_contexto or len(texto_contexto.strip()) < 80:
+        return vacio, ["Contexto demasiado corto para enriquecimiento Ollama."]
+
+    try:
+        import requests as req_mod
+    except ImportError:
+        return vacio, ["requests no disponible para Ollama."]
+
+    lista_urls = "\n".join(f"- {u}" for u in urls_permitidas[:20])
+    bloque_conv = json.dumps(
+        {
+            "nombre": conv.get("nombre", ""),
+            "plazo": conv.get("plazo", ""),
+            "presupuesto": conv.get("presupuesto", ""),
+            "beneficiarios": conv.get("beneficiarios", ""),
+            "sectores": conv.get("sectores", ""),
+        },
+        ensure_ascii=False,
+    )
+    prompt = f"""Eres un asistente que resume convocatorias de ayudas públicas en español.
+Tienes EXTRACTO de la convocatoria (puede estar incompleto). No inventes cifras ni URLs.
+
+Datos estructurados parciales:
+{bloque_conv}
+
+Texto de la convocatoria (fragmento):
+{texto_contexto[:10000]}
+
+Responde ÚNICAMENTE con un JSON válido con estas claves (strings; usa cadena vacía si no hay datos suficientes):
+- "gastos_financiables": qué gastos o conceptos son financiables (lista en texto, viñetas con "- ")
+- "intensidad_cofinanciacion": porcentajes, límites, cofinanciación obligatoria si constan
+- "documentacion_clave": memoria, presupuesto, certificados, etc. que se citen
+- "resumen_ejecutivo": 2-4 frases objetivas
+
+Referencias de enlaces oficiales conocidos (solo informativo; no repitas como si fueran cuerpo del texto):
+{lista_urls}
+"""
+    try:
+        r = req_mod.post(
+            f"{config.OLLAMA_URL.rstrip('/')}/api/generate",
+            json={
+                "model": config.OLLAMA_MODEL_CONVOCATORIA,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=config.TIMEOUT_OLLAMA_CONVOCATORIA,
+        )
+        if r.status_code != 200:
+            advertencias.append("Ollama respondió con código distinto de 200.")
+            return vacio, advertencias
+        resp = r.json().get("response", "")
+        parsed = _parse_json_ollama(resp)
+        if not parsed:
+            advertencias.append("Ollama no devolvió JSON válido para detalle de ayuda.")
+            return vacio, advertencias
+        out = {
+            "gastos_financiables": str(parsed.get("gastos_financiables", "")).strip(),
+            "intensidad_cofinanciacion": str(parsed.get("intensidad_cofinanciacion", "")).strip(),
+            "documentacion_clave": str(parsed.get("documentacion_clave", "")).strip(),
+            "resumen_ejecutivo": str(parsed.get("resumen_ejecutivo", "")).strip(),
+        }
+        return out, advertencias
+    except Exception:
+        advertencias.append("Error de red o timeout al llamar a Ollama (detalle ayuda).")
+        return vacio, advertencias
+
+
+def construir_investigacion_convocatoria(
+    url: str,
+    resultado_id: str,
+    *,
+    query: str = "",
+) -> dict[str, Any]:
+    """
+    Núcleo del pipeline: datos HTML, enriquecimiento Ollama, ediciones anteriores, ejemplos, MD+JSON.
+    `query` se reserva para trazabilidad en metadata (opcional).
+    """
+    convocatoria_actual, fuentes_1, adv_1 = extraer_datos_clave_desde_html(url)
+    urls_p = [url]
+    for _k, v in (convocatoria_actual.get("enlaces") or {}).items():
+        if isinstance(v, str) and v.startswith("http") and v not in urls_p:
+            urls_p.append(v)
+
+    html, soup = _fetch(url)
+    texto_ctx = ""
+    if soup:
+        texto_ctx = _limpiar(soup.get_text(" ", strip=True), max_len=12000)
+
+    detalle, adv_det = enriquecer_detalle_ayuda_ollama(convocatoria_actual, texto_ctx, urls_p)
+    adv_1 = adv_1 + adv_det
+
+    ediciones = descubrir_ediciones_anteriores(url)
+    ejemplos, adv_2, fuentes_2 = extraer_ejemplos_previos_html(ediciones)
+    advertencias = adv_1 + adv_2
+    fuentes = _deduplicar_fuentes(fuentes_1 + fuentes_2)
+
+    return generar_resumen_estructurado(
+        convocatoria_actual=convocatoria_actual,
+        ediciones_anteriores=ediciones,
+        ejemplos_financiados=ejemplos,
+        advertencias=advertencias,
+        fuentes=fuentes,
+        resultado_id=resultado_id,
+        detalle_ayuda=detalle,
+        query_traza=query,
+    )
+
+
 def extraer_ejemplos_desde_pdf(url_pdf: str) -> list[dict[str, str]]:
     """
     Stub preparado para fase 2.
@@ -230,18 +369,27 @@ def generar_resumen_estructurado(
     advertencias: list[str],
     fuentes: list[dict[str, Any]],
     resultado_id: str,
+    detalle_ayuda: dict[str, str] | None = None,
+    query_traza: str = "",
 ) -> dict[str, Any]:
     creado_en = datetime.now().isoformat()
+    detalle = detalle_ayuda or {}
     md = _render_markdown(
         convocatoria_actual=convocatoria_actual,
         ediciones_anteriores=ediciones_anteriores,
         ejemplos_financiados=ejemplos_financiados,
         advertencias=advertencias,
         fuentes=fuentes,
+        detalle_ayuda=detalle,
     )
-    resumen_corto = convocatoria_actual.get("nombre") or "Investigación de convocatoria completada."
+    resumen_corto = (
+        detalle.get("resumen_ejecutivo")
+        or convocatoria_actual.get("nombre")
+        or "Investigación de convocatoria completada."
+    )
     return {
         "convocatoria_actual": convocatoria_actual,
+        "detalle_ayuda": detalle,
         "ediciones_anteriores": ediciones_anteriores,
         "ejemplos_financiados": ejemplos_financiados,
         "advertencias": advertencias,
@@ -249,8 +397,9 @@ def generar_resumen_estructurado(
         "metadata": {
             "resultado_id": resultado_id,
             "creado_en": creado_en,
-            "version_pipeline": "convocatoria-html-v1",
+            "version_pipeline": "convocatoria-html-v2",
             "resumen_corto": _limpiar(resumen_corto, 180),
+            "query_traza": (query_traza or "")[:500],
         },
         "markdown": md,
     }
@@ -262,6 +411,7 @@ def _render_markdown(
     ejemplos_financiados: list[dict[str, str]],
     advertencias: list[str],
     fuentes: list[dict[str, Any]],
+    detalle_ayuda: dict[str, str],
 ) -> str:
     nombre = convocatoria_actual.get("nombre") or "Convocatoria sin título"
     lines = [f"# {nombre}", ""]
@@ -278,6 +428,23 @@ def _render_markdown(
     lines.append(f"- BOE: {enlaces.get('boe') or 'N/D'}")
     lines.append(f"- BDNS: {enlaces.get('bdns') or 'N/D'}")
     lines.append(f"- Resolución: {enlaces.get('resolucion_convocatoria') or 'N/D'}")
+    lines.append("")
+    lines.append("## Gastos financiables y ayuda (resumen)")
+    gf = (detalle_ayuda or {}).get("gastos_financiables") or ""
+    ic = (detalle_ayuda or {}).get("intensidad_cofinanciacion") or ""
+    dc = (detalle_ayuda or {}).get("documentacion_clave") or ""
+    re = (detalle_ayuda or {}).get("resumen_ejecutivo") or ""
+    if re:
+        lines.append(re)
+        lines.append("")
+    lines.append("### Gastos financiables")
+    lines.append(gf if gf else "N/D (sin datos suficientes en el extracto).")
+    lines.append("")
+    lines.append("### Intensidad y cofinanciación")
+    lines.append(ic if ic else "N/D.")
+    lines.append("")
+    lines.append("### Documentación clave")
+    lines.append(dc if dc else "N/D.")
     lines.append("")
     lines.append("## Ediciones anteriores")
     if ediciones_anteriores:

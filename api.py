@@ -53,7 +53,7 @@ def _parse_json_stdout(stdout: str) -> dict | None:
 
 @app.post("/scrape")
 def scrape():
-    """Ejecuta un ciclo del worker scraper (--once)."""
+    """Ejecuta un ciclo del worker de investigación profunda de convocatorias (--once)."""
     return _run_script("scripts.worker_scraper", "--once")
 
 
