@@ -1,0 +1,43 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://fundacionlacaixa.org/es/convocatorias-sociales-accion-social-ambito-rural"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo descargar o parsear la ficha objetivo.",
+    "Contexto demasiado corto para enriquecimiento Ollama.",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://fundacionlacaixa.org/es/convocatorias-sociales-accion-social-ambito-rural",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "fbf8556fd15935ec",
+    "creado_en": "2026-04-12T04:00:07.207030",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Investigación de convocatoria completada.",
+    "query_traza": ""
+  }
+}

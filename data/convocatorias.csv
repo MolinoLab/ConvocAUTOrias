@@ -1,32 +1,92 @@
-id,url,titulo,descripcion,plazo_fin,requisitos,estado,fecha_ingesta,fuente
-c4ececba4acfc373,https://fundacioncerezalesantoninoycinia.org/lineas-troncales/,"FUNDACION CEREZALES ANTONINA - arte, cultura, etnoeducacion…","arte, cultura, etnoeducacion…",anual,,pendiente,2026-03-11T22:24:29.285416,csv
-7cb540e0b2de6bbb,https://fundacionlacaixa.org/es/convocatorias-sociales-accion-social-ambito-rural,Caixa - accion social en el medio rural,accion social en el medio rural,4 mayo y 20 julio,1 año minimo de antiguedad,pendiente,2026-03-11T22:24:29.285439,csv
+id,url,titulo,descripcion,plazo_fin,requisitos,estado,fecha_ingesta,fuente,investigacion_id,investigacion_fecha,investigacion_version,investigacion_intentos
+c4ececba4acfc373,https://fundacioncerezalesantoninoycinia.org/lineas-troncales/,"FUNDACION CEREZALES ANTONINA - arte, cultura, etnoeducacion…","arte, cultura, etnoeducacion…
+
+[Resumen profundo] /app/data/resumenes_convocatoria/db0b6b4960ebd5e6.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/db0b6b4960ebd5e6.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/db0b6b4960ebd5e6.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/db0b6b4960ebd5e6.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/db0b6b4960ebd5e6.md",anual,,investigacion_parcial,2026-03-11T22:24:29.285416,csv,db0b6b4960ebd5e6,2026-04-12T04:00:02.939939,convocatoria-html-v2,5
+7cb540e0b2de6bbb,https://fundacionlacaixa.org/es/convocatorias-sociales-accion-social-ambito-rural,Caixa - accion social en el medio rural,"accion social en el medio rural
+
+[Resumen profundo] /app/data/resumenes_convocatoria/fbf8556fd15935ec.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/fbf8556fd15935ec.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/fbf8556fd15935ec.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/fbf8556fd15935ec.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/fbf8556fd15935ec.md",4 mayo y 20 julio,1 año minimo de antiguedad,investigacion_parcial,2026-03-11T22:24:29.285439,csv,fbf8556fd15935ec,2026-04-12T04:00:07.207030,convocatoria-html-v2,5
 3fad8ca3495e77cf,https://www.fondationcarasso.org/es/convocatorias/#convocatorias,Convocatorias para cambiar la forma de alimentarnos y de relacionarnos con el arte,"Convocatorias para cambiar la forma de alimentarnos y de relacionarnos con el arte
 ¿Tienes un proyecto con impacto social, cultural o medioambiental?
-Si trabajas por una Alimentación Sostenible o impulsas el Arte Ciudadano como motor de transformación, te invitamos a presentar tu propuesta. En la Fundación Daniel y Nina Carasso apoyamos iniciativas que imaginan y construyen un futuro más justo. Consulta las bases, revisa los criterios y forma parte del cambio.",A confirmar,"Proyecto con impacto social, cultural o medioambiental",pendiente,2026-03-11T22:24:29.285446,csv
+Si trabajas por una Alimentación Sostenible o impulsas el Arte Ciudadano como motor de transformación, te invitamos a presentar tu propuesta. En la Fundación Daniel y Nina Carasso apoyamos iniciativas que imaginan y construyen un futuro más justo. Consulta las bases, revisa los criterios y forma parte del cambio.
+
+[Resumen profundo] /app/data/resumenes_convocatoria/bcf5623620041a24.md",A confirmar,"Proyecto con impacto social, cultural o medioambiental",investigacion_ok,2026-03-11T22:24:29.285446,csv,bcf5623620041a24,2026-04-12T16:02:27.010550,convocatoria-html-v2,0
 1c1de897d3ad5a86,https://www.recursosculturales.com/inaem-ayudas-danza-lirica-musica/,INAEM abre convocatoria de ayudas para teatro y circo 2025 (España),"El Instituto Nacional de las Artes Escénicas y de la Música (INAEM), organismo autónomo del Ministerio de Cultura, ha abierto el plazo de solicitud de la convocatoria de las ayudas al teatro y al circo, en régimen de concurrencia competitiva, correspondientes al año 2025, a la que se destina una partida de 10.096.138 euros.
-Esta convocatoria incluye varias novedades, entre las que destacan el fomento de los proyectos de carácter pluridisciplinar; el incremento del apoyo al sector del circo –que,...",19 de marzo,Inscripciones electrónicas a través de la web del Ministerio de Cultura,pendiente,2026-03-11T22:24:29.285452,csv
+Esta convocatoria incluye varias novedades, entre las que destacan el fomento de los proyectos de carácter pluridisciplinar; el incremento del apoyo al sector del circo –que,...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/2808aa709b9e4461.md",19 de marzo,Inscripciones electrónicas a través de la web del Ministerio de Cultura,investigacion_ok,2026-03-11T22:24:29.285452,csv,2808aa709b9e4461,2026-04-12T16:04:42.159630,convocatoria-html-v2,0
 48ac0e3185e5d44e,https://www.infoayudas.com/Infoayudas-Ayudas-a-la-reforestacion-y-creacion-de-superficies-forestales-cofinanciadas-por-el-Fondo-Europeo-Agricola-de-Desarrollo-Rural-FEADER-en-el-marco-del--70399.php,"Ayudas a la reforestación y creación de superficies forestales, cofinanciadas por el Fondo Europeo Agrícola de Desarrollo Rural (FEADER), en el marco del Programa de Desarrollo Rural de Castilla y León 2014-2020, para el año 2023.","Ayudas a la reforestación y creación de superficies forestales, cofinanciadas por el Fondo Europeo Agrícola de Desarrollo Rural (FEADER), en el marco del Programa de Desarrollo Rural de Castilla y León 2014-2020, para el año 2023.
 Código de ayuda:
 S25291/15Norma:
-ORDEN FYM/399/2015, de 12 de mayo. ORDEN FYM/607/2015, de 3 de julio. Orden de 19 de julio de 2016. ORDEN FYM/84/2017, de 6 de febrero. Orden de 16 de febrero de 2017. ORDEN FYM/148/2018, de 1 de febrero. Orden de 8 de mayo de 2018. ORD...",29 de septiembre de 2023,"Organismos públicos, microempresas, pequeñas y medianas empresas, personas físicas y jurídicas propietarias o usufructuarias de tierras, agrupaciones de beneficiarios, comunidades de bienes y suscesores.",pendiente,2026-03-11T22:24:29.285458,csv
-991dbe23ee193aff,https://fundacion-biodiversidad.es/sites/default/files/multimedia/archivos/convocatoria_empleaverde_emplea_2020.pdf?fbclid=IwAR3XFL4S3MlU7Kr5W4ErJSUS1WD4NsOaAv2eyN0hIH9KSH6gJc80O6HDBjQ,Fundacion Biodiversidad - empleo economia verde y social,empleo economia verde y social,sept-21,"temas empleo, tenemos que tener personas contratadas",pendiente,2026-03-11T22:24:29.285465,csv
-025f330d517eb30b,http://www.fundacionsiglo.es/web/es/fundacion/ayudas-subvenciones-abiertas.html,Ayudas y subvenciones abiertas,"Otros temas
-Fundación Siglo para el Turismo y las Artes de Castilla y León
-Imprimir listado
-Página 1 de 1
-Redes sociales",Se debe proporcionar,"Entidad sin ánimo de lucro en el sector cultural, con presencia en Castilla y León y proyectos con un impacto medible en la mejora de la identidad regional y el turismo.",pendiente,2026-03-11T22:24:29.285469,csv
+ORDEN FYM/399/2015, de 12 de mayo. ORDEN FYM/607/2015, de 3 de julio. Orden de 19 de julio de 2016. ORDEN FYM/84/2017, de 6 de febrero. Orden de 16 de febrero de 2017. ORDEN FYM/148/2018, de 1 de febrero. Orden de 8 de mayo de 2018. ORD...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/422866ed6101b701.md",29 de septiembre de 2023,podrán ser beneficiarios de la prima de mantenimiento quienes sucedan a los beneficiarios en las obligaciones y compromisos por cualquier forma de transmisión de las tierras objeto de ayuda y que cumplan las condiciones y requisitos establecidos en el apartado anterior,investigacion_ok,2026-03-11T22:24:29.285458,csv,422866ed6101b701,2026-04-13T04:02:03.251755,convocatoria-html-v2,0
+991dbe23ee193aff,https://fundacion-biodiversidad.es/sites/default/files/multimedia/archivos/convocatoria_empleaverde_emplea_2020.pdf?fbclid=IwAR3XFL4S3MlU7Kr5W4ErJSUS1WD4NsOaAv2eyN0hIH9KSH6gJc80O6HDBjQ,Fundacion Biodiversidad - empleo economia verde y social,"empleo economia verde y social
+
+[Resumen profundo] /app/data/resumenes_convocatoria/5db21d15e0240293.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/5db21d15e0240293.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/5db21d15e0240293.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/5db21d15e0240293.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/5db21d15e0240293.md",sept-21,"temas empleo, tenemos que tener personas contratadas",investigacion_parcial,2026-03-11T22:24:29.285465,csv,5db21d15e0240293,2026-04-15T04:00:05.333943,convocatoria-html-v2,5
+025f330d517eb30b,http://www.fundacionsiglo.es/web/es/fundacion/ayudas-subvenciones-abiertas.html,Ayudas y subvenciones abiertas,"Esta convocatoria propone ayudas para financiar proyectos culturales y festivales en Castilla y León, con un enfoque en actividades complementarias culturales. Se requiere documentación como memoria y presupuesto, así como certificados relevantes.
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b19afdb8871cce22.md",Se debe proporcionar,"Entidad sin ánimo de lucro en el sector cultural, con presencia en Castilla y León y proyectos con un impacto medible en la mejora de la identidad regional y el turismo.",investigacion_ok,2026-03-11T22:24:29.285469,csv,b19afdb8871cce22,2026-04-14T04:01:24.575169,convocatoria-html-v2,0
 8fad99f775cc38df,https://www.recursosculturales.com/convocatoria-ibermemoria/,"IBERMEMORIA: apoyo a proyectos de preservación, acceso y salvaguarda del patrimonio sonoro, fotográfico y audiovisual de Iberoamérica","IBERMEMORIA: apoyo a proyectos de preservación, acceso y salvaguarda del patrimonio sonoro, fotográfico y audiovisual de Iberoamérica
 0El Programa Ibermemoria Sonora, Fotográfica y Audiovisual es una instancia de carácter multilateral de cooperación técnica y financiera para fomentar la investigación, rescate, preservación, acceso y difusión del patrimonio sonoro, fotográfico y audiovisual de Iberoamérica.
-El Programa Ibermemoria Sonora, Fotográfica y Audiovisual es una instancia de carácter mul...",3 de abril de 2024,"Instituciones públicas, privadas, mixtas u organizaciones de la sociedad civil de Argentina, Colombia, Costa Rica, Cuba, Ecuador, México, Nicaragua, Panamá y República Dominicora",pendiente,2026-03-11T22:24:29.285472,csv
-d88f37527478b756,https://sympathyforthelawyer.com/2019/08/21/convocatoria-de-ayudas-europeas-para-musica-en-directo-y-salas/?fbclid=IwAR1wYgp8zWe3nW6JkrU6XPid0nts-cljNcUCWWYvR6lqC8TnYq-k2UGljnQ#Plazo_de_solicitud,Sympathy for the lawyer - ayudas europeas para musica en directo,ayudas europeas para musica en directo,nov-21,,pendiente,2026-03-11T22:24:29.285477,csv
-a51b710a54c747e9,https://www.recursosculturales.com/ibermusicas-ayudas-movilidad-musicos-festivales-residencias/?fbclid=IwAR217WU0RRIaVyMz4lO-YpeqlPeNWsi9jClS9S_tMRMmiu4BRNSByuj3IaQ,Ibermusicas - movilidad musicos y festivales,movilidad musicos y festivales,16-nov,,pendiente,2026-03-11T22:24:29.285480,csv
+El Programa Ibermemoria Sonora, Fotográfica y Audiovisual es una instancia de carácter mul...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/9f6b52680f924d5e.md",3 de abril de 2024,"Instituciones públicas, privadas, mixtas u organizaciones de la sociedad civil de Argentina, Colombia, Costa Rica, Cuba, Ecuador, México, Nicaragua, Panamá y República Dominicora",investigacion_ok,2026-03-11T22:24:29.285472,csv,9f6b52680f924d5e,2026-04-14T16:02:21.143708,convocatoria-html-v2,0
+d88f37527478b756,https://sympathyforthelawyer.com/2019/08/21/convocatoria-de-ayudas-europeas-para-musica-en-directo-y-salas/?fbclid=IwAR1wYgp8zWe3nW6JkrU6XPid0nts-cljNcUCWWYvR6lqC8TnYq-k2UGljnQ#Plazo_de_solicitud,Sympathy for the lawyer - ayudas europeas para musica en directo,"ayudas europeas para musica en directo
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8e936b40c037851f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8e936b40c037851f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8e936b40c037851f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8e936b40c037851f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8e936b40c037851f.md",nov-21,,investigacion_parcial,2026-03-11T22:24:29.285477,csv,8e936b40c037851f,2026-04-17T04:00:07.451895,convocatoria-html-v2,5
+a51b710a54c747e9,https://www.recursosculturales.com/ibermusicas-ayudas-movilidad-musicos-festivales-residencias/?fbclid=IwAR217WU0RRIaVyMz4lO-YpeqlPeNWsi9jClS9S_tMRMmiu4BRNSByuj3IaQ,Ibermusicas - movilidad musicos y festivales,"movilidad musicos y festivales
+
+[Resumen profundo] /app/data/resumenes_convocatoria/57e46c40afbc1134.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/57e46c40afbc1134.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/57e46c40afbc1134.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/57e46c40afbc1134.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/57e46c40afbc1134.md",16-nov,,investigacion_parcial,2026-03-11T22:24:29.285480,csv,57e46c40afbc1134,2026-04-17T16:00:06.998205,convocatoria-html-v2,5
 49bdf06e36a64055,https://www.recursosculturales.com/ibermusicas-ayudas-modalidad-virtual/,Ibermúsicas abre convocatoria de ayuda a proyectos virtuales 2025,"La convocatoria de Ibermúsicas de ayuda a proyectos virtuales está destinada a la realización de proyectos musicales que utilicen las herramientas virtuales como plataforma: grabación de álbumes, creación de videoclips, shows en streaming, colaboraciones virtuales, video conferencias, talleres virtuales, podcasts y mucho más.
 Apertura período de inscripción: Lunes 16 de junio
 Cierre período de inscripción: Miércoles 1 de octubre
 SOBRE EL PROGRAMA IBERMÚSICAS
-Ibermúsicas es un Programa multilater...",Miércoles 1 de octubre,Proyectos musicales utilizando herramientas virtuales,pendiente,2026-03-11T22:24:29.285484,csv
-609cae8b91acaf2e,https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/533909,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,realización de festivales en Castilla y León y actividades culturales complementarias,nov,,pendiente,2026-03-11T22:24:29.285488,csv
+Ibermúsicas es un Programa multilater...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/4d498d5a8a4e147a.md",Miércoles 1 de octubre,Proyectos musicales utilizando herramientas virtuales,investigacion_ok,2026-03-11T22:24:29.285484,csv,4d498d5a8a4e147a,2026-04-17T16:02:22.611280,convocatoria-html-v2,0
+609cae8b91acaf2e,https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/533909,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,"realización de festivales en Castilla y León y actividades culturales complementarias
+
+[Resumen profundo] /app/data/resumenes_convocatoria/3c7a60aeaf3990b4.md",nov,,investigacion_ok,2026-03-11T22:24:29.285488,csv,3c7a60aeaf3990b4,2026-04-18T04:00:02.587054,convocatoria-html-v2,0
 d7530286ebc26e3a,https://www.patagonia.com/how-we-fund/,Hang Tight! Routing to checkout...,"Weâve got our hands full at the moment but we should be up and moving shortly.
 This page will automatically refresh and bring you into the website as soon as we can handle it.
 U.S. & CANADA |
@@ -36,22 +96,104 @@ European customers can email directsales.europe@patagonia.com or reach us by pho
 JAPAN |
 ãè¿·æããæããã¦ããã¾ãããç¾å¨ã¦ã§ããµã¤ãããå©ç¨ããã ãã¾ããã
 æãå
-¥ãã¾ãã...",abril y dic,"U.S. & CANADA residents contact Patagonia for immediate needs, European customers email directsales.europe@patagonia.com, Japanese customers contact customerservice.japan@patagoniathai.com.",pendiente,2026-03-11T22:24:29.285492,csv
-52fd4bce74156127,https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/541187,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,realización de actividades de información y difusión de las características del sistema de producción ecológico y otras.,dic,,pendiente,2026-03-11T22:24:29.285497,csv
-41b468d511c71a92,https://eucyl.jcyl.es/web/es/gabinete-proyectos-europeos/educacion-cultura-deporte-turismo.html,TRANSFONTERIZA - educacion deporte,educacion deporte,,,pendiente,2026-03-11T22:24:29.285501,csv
-b4261c8216b2d013,https://eucyl.jcyl.es/web/es/gabinete-proyectos-europeos/medio-ambiente-desarrollo-sostenible.html,TRANSFONTERIZA - desarrollo sost y medio ambiente,desarrollo sost y medio ambiente,,,pendiente,2026-03-11T22:24:29.285505,csv
+¥ãã¾ãã...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/018fbfbe2eb65a55.md",abril y dic,"U.S. & CANADA residents contact Patagonia for immediate needs, European customers email directsales.europe@patagonia.com, Japanese customers contact customerservice.japan@patagoniathai.com.",investigacion_ok,2026-03-11T22:24:29.285492,csv,018fbfbe2eb65a55,2026-04-18T04:02:08.882267,convocatoria-html-v2,0
+52fd4bce74156127,https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/541187,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,"realización de actividades de información y difusión de las características del sistema de producción ecológico y otras.
+
+[Resumen profundo] /app/data/resumenes_convocatoria/41f57b75c2341413.md",dic,,investigacion_ok,2026-03-11T22:24:29.285497,csv,41f57b75c2341413,2026-04-18T16:00:02.456485,convocatoria-html-v2,0
+41b468d511c71a92,https://eucyl.jcyl.es/web/es/gabinete-proyectos-europeos/educacion-cultura-deporte-turismo.html,TRANSFONTERIZA - educacion deporte,"educacion deporte
+
+[Resumen profundo] /app/data/resumenes_convocatoria/7b7d93867f64fa82.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/7b7d93867f64fa82.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/7b7d93867f64fa82.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/7b7d93867f64fa82.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/7b7d93867f64fa82.md",,,investigacion_parcial,2026-03-11T22:24:29.285501,csv,7b7d93867f64fa82,2026-04-20T16:00:02.890361,convocatoria-html-v2,5
+b4261c8216b2d013,https://eucyl.jcyl.es/web/es/gabinete-proyectos-europeos/medio-ambiente-desarrollo-sostenible.html,TRANSFONTERIZA - desarrollo sost y medio ambiente,"desarrollo sost y medio ambiente
+
+[Resumen profundo] /app/data/resumenes_convocatoria/cf5218c9deaf646b.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/cf5218c9deaf646b.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/cf5218c9deaf646b.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/cf5218c9deaf646b.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/cf5218c9deaf646b.md",,,investigacion_parcial,2026-03-11T22:24:29.285505,csv,cf5218c9deaf646b,2026-04-21T04:00:02.837991,convocatoria-html-v2,5
 4de79c0ef54b5dec,https://www.poctep.eu/es/2014-2020/medioambiente-cambio-clim%C3%A1tico-prevenci%C3%B3n-de-riesgos,"Medioambiente, cambio climático, prevención de riesgos","VER también: Turismo sostenible y conservación del patrimonio natural
 Ver también: Otras tématicas POCTEP
 PDF: 14 sustainable development projects
 Cambio climático, prevención de riesgos
 (Categoría 87: “Medidas de adaptación al cambio climático y prevención y gestión de riesgos relacionados con el clima, como la erosión, los incendios, las inundaciones, las tormentas y las sequías, incluida la sensibilización, la protección civil y los sistemas e infraestructuras de gestión de catástrofes”
-Categ...",,,pendiente,2026-03-11T22:24:29.285514,csv
-1c6a86beac5ac087,https://www.subvenciones.gob.es/bdnstrans/A07/es/inicio,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,,,,pendiente,2026-03-11T22:57:58.186604,telegram
-bd8d92fd094585f9,https://www.cdti.es/ayudas/ayudas-neotec,ayudas-neotec,,,,pendiente,2026-03-12T12:29:59.742969,telegram
-1ffc184811027348,https://culturayciudadania.cultura.gob.es/cultura-medio-rural.html,https://culturayciudadania.cultura.gob.es/cultura-medio-rural.html,,,,pendiente,2026-03-12T16:03:04.254687,telegram
+Categ...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/4ca3e61fb653deea.md",,,investigacion_ok,2026-03-11T22:24:29.285514,csv,4ca3e61fb653deea,2026-04-21T04:02:27.836112,convocatoria-html-v2,0
+1c6a86beac5ac087,https://www.subvenciones.gob.es/bdnstrans/A07/es/inicio,Sistema Nacional de Publicidad de Subvenciones y Ayudas PÃºblicas,[Resumen profundo] /app/data/resumenes_convocatoria/024f4dd4426b4d38.md,,,investigacion_ok,2026-03-11T22:57:58.186604,telegram,024f4dd4426b4d38,2026-04-21T16:00:02.676746,convocatoria-html-v2,0
+bd8d92fd094585f9,https://www.cdti.es/ayudas/ayudas-neotec,ayudas-neotec,[Resumen profundo] /app/data/resumenes_convocatoria/40382829c28dfac5.md,,,investigacion_ok,2026-03-12T12:29:59.742969,telegram,40382829c28dfac5,2026-04-21T16:00:07.470799,convocatoria-html-v2,0
+1ffc184811027348,https://culturayciudadania.cultura.gob.es/cultura-medio-rural.html,https://culturayciudadania.cultura.gob.es/cultura-medio-rural.html,"[Resumen profundo] /app/data/resumenes_convocatoria/208268852af8b115.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/208268852af8b115.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/208268852af8b115.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/208268852af8b115.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/208268852af8b115.md",,,investigacion_parcial,2026-03-12T16:03:04.254687,telegram,208268852af8b115,2026-04-24T04:00:01.686790,convocatoria-html-v2,5
 c20826661a33d70c,https://iclc.toplap.org/2027/,ICLC 2027,"The International Conference on Live Coding (ICLC) is dedicated to practices and research focused on technologies and philosophies that interpret the use of computer code and the public writing of algorithms as performative gestures. In its previous editions the community has provided valuable insights on this practice from diverse perspectives, including artistic, technical, philosophical, educational, social and political.
 CALL FOR PARTICIPATION
-The 10th edition of ICLC will take place in Antw...",13 de marzo de 2027,"Submisión de propuestas relacionadas con el tema 'Dialogues'. Propuestas en formato de papers, performances en vivo, talleres y eventos satélites. No hay coste de presentación. Se acepta la traducción al idioma nativo o inglés.",pendiente,2026-03-12T21:25:42.882185,telegram
-f8a0f3473cf5b845,https://resartis.org/open-calls/?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcAQ1zxZleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaes4jzqjgYZ-9FPR9_LkkyZnWb8sBe0LlK4uHMd91yiS7hYOqcGqp8LvRQ7kw_aem_ykSkzHEgjZY6yUrrLeZEQQ,https://resartis.org/open-calls/?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcAQ1zxZleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaes4jzqjgYZ-9FPR9_LkkyZnWb8sBe0LlK4uHMd91yiS7hYOqcGqp8LvRQ7kw_aem_ykSkzHEgjZY6yUrrLeZEQQ,,,,pendiente,2026-03-29T09:24:40.141824,telegram
-7a82d261e74ed3ee,https://culturayciudadania.cultura.gob.es/ayudas.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgQ30wxleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacdBEOlZoyYjokRB6DAQXZzZmRztL8Frml-d37DeuHKq8Ezp9c3v1y0pb9ZfA_aem_hgmA10NS3rq2VOvGr9DZlg,https://culturayciudadania.cultura.gob.es/ayudas.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgQ30wxleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacdBEOlZoyYjokRB6DAQXZzZmRztL8Frml-d37DeuHKq8Ezp9c3v1y0pb9ZfA_aem_hgmA10NS3rq2VOvGr9DZlg,,,,pendiente,2026-03-30T22:06:14.779580,telegram
-18a9eda20339281c,https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html,https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html,,,,pendiente,2026-04-08T14:26:09.600892,telegram
+The 10th edition of ICLC will take place in Antw...
+
+[Resumen profundo] /app/data/resumenes_convocatoria/8d027adccb32ab4b.md",13 de marzo de 2027,"Submisión de propuestas relacionadas con el tema 'Dialogues'. Propuestas en formato de papers, performances en vivo, talleres y eventos satélites. No hay coste de presentación. Se acepta la traducción al idioma nativo o inglés.",investigacion_ok,2026-03-12T21:25:42.882185,telegram,8d027adccb32ab4b,2026-04-22T04:02:07.164487,convocatoria-html-v2,0
+f8a0f3473cf5b845,https://resartis.org/open-calls/?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcAQ1zxZleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaes4jzqjgYZ-9FPR9_LkkyZnWb8sBe0LlK4uHMd91yiS7hYOqcGqp8LvRQ7kw_aem_ykSkzHEgjZY6yUrrLeZEQQ,https://resartis.org/open-calls/?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcAQ1zxZleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaes4jzqjgYZ-9FPR9_LkkyZnWb8sBe0LlK4uHMd91yiS7hYOqcGqp8LvRQ7kw_aem_ykSkzHEgjZY6yUrrLeZEQQ,"[Resumen profundo] /app/data/resumenes_convocatoria/30f37cc8bb83b483.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/30f37cc8bb83b483.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/30f37cc8bb83b483.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/30f37cc8bb83b483.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/30f37cc8bb83b483.md",,,investigacion_parcial,2026-03-29T09:24:40.141824,telegram,30f37cc8bb83b483,2026-04-24T16:00:03.750965,convocatoria-html-v2,5
+7a82d261e74ed3ee,https://culturayciudadania.cultura.gob.es/ayudas.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgQ30wxleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacdBEOlZoyYjokRB6DAQXZzZmRztL8Frml-d37DeuHKq8Ezp9c3v1y0pb9ZfA_aem_hgmA10NS3rq2VOvGr9DZlg,https://culturayciudadania.cultura.gob.es/ayudas.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgQ30wxleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacdBEOlZoyYjokRB6DAQXZzZmRztL8Frml-d37DeuHKq8Ezp9c3v1y0pb9ZfA_aem_hgmA10NS3rq2VOvGr9DZlg,"[Resumen profundo] /app/data/resumenes_convocatoria/b0dc5155291e1ca3.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b0dc5155291e1ca3.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b0dc5155291e1ca3.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b0dc5155291e1ca3.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b0dc5155291e1ca3.md",,,investigacion_parcial,2026-03-30T22:06:14.779580,telegram,b0dc5155291e1ca3,2026-04-26T16:00:01.820384,convocatoria-html-v2,5
+18a9eda20339281c,https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html,https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html,"[Resumen profundo] /app/data/resumenes_convocatoria/ce7e2dfdec2b291e.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/ce7e2dfdec2b291e.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/ce7e2dfdec2b291e.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/ce7e2dfdec2b291e.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/ce7e2dfdec2b291e.md",,,investigacion_parcial,2026-04-08T14:26:09.600892,telegram,ce7e2dfdec2b291e,2026-04-27T04:00:01.728798,convocatoria-html-v2,5
+9200c919767621f8,https://www.cultura.gob.es/cultura/derechos-culturales/ayudas-dgddcc/ayudas-impacto-social.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRLEilleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaekpikdu_e_MtGrQKqDpEHijJWAuc_KQKACVmaUUlmqaTy3X-KUVchzDz7kkg_aem_fBChbqlejUgd0_iJrYT04A,ayudas impacto social.html?utm source=ig&utm medium=social&utm content=link in bio&fbclid=PAdGRzdgRLEilleHRuA2FlbQIxMQBz,"[Resumen profundo] /app/data/resumenes_convocatoria/e10e19f5a204b41f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/e10e19f5a204b41f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/e10e19f5a204b41f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/e10e19f5a204b41f.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/e10e19f5a204b41f.md",,,investigacion_parcial,2026-04-14T12:28:35.874201,telegram,e10e19f5a204b41f,2026-04-29T04:00:01.352706,convocatoria-html-v2,5
+e308a30d8690ff65,https://labea.net/materia-bosque/?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcARNoqdleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaeS0fLWyg8rf880o6FrW9xchQu9CjW8IfnrJ2GgzlU5Skm34HVZV549Avh4vA_aem_24pC_J-UW3Isbl83SGeqBA,Materia Bosque,[Resumen profundo] /app/data/resumenes_convocatoria/8c97bf3ea5304610.md,,,investigacion_ok,2026-04-16T11:09:56.091949,telegram,8c97bf3ea5304610,2026-04-27T16:02:16.237019,convocatoria-html-v2,0
+5423e4d411eb67e0,https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/general/31/3190334/ficha/3190334-2026.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRp4IpleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAadnKJck-WsEwCcYmsKbSwNorhPVulvZtvepRwIhaKOBnItK2xgI0IxVA_NbAg_aem_wnpugKHUidJmMiWPXd3YcA,3190334 2026.html?utm source=ig&utm medium=social&utm content=link in bio&fbclid=PAdGRzdgRp4IpleHRuA2FlbQIxMQBzcnRjBmFwc,"[Resumen profundo] /app/data/resumenes_convocatoria/b371e02a5fabc7c4.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b371e02a5fabc7c4.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b371e02a5fabc7c4.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b371e02a5fabc7c4.md
+
+[Resumen profundo] /app/data/resumenes_convocatoria/b371e02a5fabc7c4.md",,,investigacion_parcial,2026-05-07T21:17:32.978216,telegram,b371e02a5fabc7c4,2026-05-10T04:00:01.375613,convocatoria-html-v2,5
+3286eaa8587f5b07,https://berlinscienceweek.com/call-participation?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcARp4TRleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacXGky2cSwH68LvoJ5iH101VLD1N4edlGo27VC3nM9_TmE91xmGEM0DFWEJhw_aem_JDop6Dp87CMR15mmwrIg9A,CALL FOR PARTICIPATION,"La convocatoria de participación de Berlin Science Week ofrece oportunidades para la participación en el programa de la ciudad, patrocinio y voluntariado. Los interesados deben proporcionar una memoria, un presupuesto y otros documentos solicitados por la organización para su consideración.
+
+[Resumen profundo] /app/data/resumenes_convocatoria/a0bd57df32bf6a47.md",,,investigacion_ok,2026-05-07T21:19:48.585996,telegram,a0bd57df32bf6a47,2026-05-08T04:01:43.442317,convocatoria-html-v2,0

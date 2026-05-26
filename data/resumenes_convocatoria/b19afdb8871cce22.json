@@ -1,0 +1,41 @@
+{
+  "convocatoria_actual": {
+    "nombre": "Ayudas y subvenciones abiertas",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "http://www.fundacionsiglo.es/web/es/fundacion/ayudas-subvenciones-abiertas.html"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "['proyectos culturales', 'festivales', 'actividades culturales complementarias']",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "memoria, presupuesto, certificados",
+    "resumen_ejecutivo": "Esta convocatoria propone ayudas para financiar proyectos culturales y festivales en Castilla y León, con un enfoque en actividades complementarias culturales. Se requiere documentación como memoria y presupuesto, así como certificados relevantes."
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "http://www.fundacionsiglo.es/web/es/fundacion/ayudas-subvenciones-abiertas.html",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "b19afdb8871cce22",
+    "creado_en": "2026-04-14T04:01:24.575169",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Esta convocatoria propone ayudas para financiar proyectos culturales y festivales en Castilla y León, con un enfoque en actividades complementarias culturales. Se requiere document",
+    "query_traza": ""
+  }
+}

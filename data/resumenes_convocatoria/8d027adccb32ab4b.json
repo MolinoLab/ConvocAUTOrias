@@ -1,0 +1,42 @@
+{
+  "convocatoria_actual": {
+    "nombre": "ICLC 2027",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://iclc.toplap.org/2027/"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://iclc.toplap.org/2027/",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "8d027adccb32ab4b",
+    "creado_en": "2026-04-22T04:02:07.164487",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "ICLC 2027",
+    "query_traza": ""
+  }
+}

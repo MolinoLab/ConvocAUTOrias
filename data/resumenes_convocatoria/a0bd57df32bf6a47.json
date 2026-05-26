@@ -1,0 +1,41 @@
+{
+  "convocatoria_actual": {
+    "nombre": "CALL FOR PARTICIPATION",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://berlinscienceweek.com/call-participation?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcARp4TRleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacXGky2cSwH68LvoJ5iH101VLD1N4edlGo27VC3nM9_TmE91xmGEM0DFWEJhw_aem_JDop6Dp87CMR15mmwrIg9A"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "['- participación en el programa de la ciudad', '- patrocinio', '- voluntariado']",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "['memoria', 'presupuesto', 'certificados', 'otros documentos solicitados por la organización']",
+    "resumen_ejecutivo": "La convocatoria de participación de Berlin Science Week ofrece oportunidades para la participación en el programa de la ciudad, patrocinio y voluntariado. Los interesados deben proporcionar una memoria, un presupuesto y otros documentos solicitados por la organización para su consideración."
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://berlinscienceweek.com/call-participation?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAb21jcARp4TRleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAacXGky2cSwH68LvoJ5iH101VLD1N4edlGo27VC3nM9_TmE91xmGEM0DFWEJhw_aem_JDop6Dp87CMR15mmwrIg9A",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "a0bd57df32bf6a47",
+    "creado_en": "2026-05-08T04:01:43.442317",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "La convocatoria de participación de Berlin Science Week ofrece oportunidades para la participación en el programa de la ciudad, patrocinio y voluntariado. Los interesados deben pro",
+    "query_traza": ""
+  }
+}

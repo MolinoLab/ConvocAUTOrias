@@ -1,0 +1,42 @@
+{
+  "convocatoria_actual": {
+    "nombre": "Ayudas a la reforestación y creación de superficies forestales, cofinanciadas por el Fondo Europeo Agrícola de Desarrollo Rural (FEADER), en el marco del Programa de Desarrollo Rural de Castilla y León 2014-2020, para el año 2023.",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "podrán ser beneficiarios de la prima de mantenimiento quienes sucedan a los beneficiarios en las obligaciones y compromisos por cualquier forma de transmisión de las tierras objeto de ayuda y que cumplan las condiciones y requisitos establecidos en el apartado anterior",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.infoayudas.com/Infoayudas-Ayudas-a-la-reforestacion-y-creacion-de-superficies-forestales-cofinanciadas-por-el-Fondo-Europeo-Agricola-de-Desarrollo-Rural-FEADER-en-el-marco-del--70399.php"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.infoayudas.com/Infoayudas-Ayudas-a-la-reforestacion-y-creacion-de-superficies-forestales-cofinanciadas-por-el-Fondo-Europeo-Agricola-de-Desarrollo-Rural-FEADER-en-el-marco-del--70399.php",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "422866ed6101b701",
+    "creado_en": "2026-04-13T04:02:03.251755",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Ayudas a la reforestación y creación de superficies forestales, cofinanciadas por el Fondo Europeo Agrícola de Desarrollo Rural (FEADER), en el marco del Programa de Desarrollo Rur",
+    "query_traza": ""
+  }
+}

@@ -1,0 +1,1 @@
+Para el deca luego de la Interacidad Fest. Es un festival auto gestionado. Por lo tanto si crees que algo puede estar mejor, pide la ayuda a alguien y hazlo. Abrimos este espacio para que podamos disfrutar juntas del evento. Cuida a todos los seres vivos. Cuida a los seres vivos que habitan en él.

@@ -1,2 +1,3 @@
 id,titulo,fecha_creacion,persona_contacto,email_contacto,presupuesto,tiempo_total,fecha_fin,estado,tags,ruta,fuente
 83bba915cd69092a,"Valle del Duero, Castronuño","31,03,2026",Victor Casas,valdejimbro@gmail.com,1000,205,"09,04,2026",activo,,data/proyectos/Valle_del_Duero_Castronuño.md,telegram
+f0f0567e46ef8ded,Castronuño sala 2,"26,05,2026",Victor,valdejimbro@hotmail.com,,0,,activo,,data/proyectos/Castronuño_sala_2.md,telegram

@@ -1,0 +1,43 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/533909"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo extraer el nombre de la convocatoria.",
+    "Contexto demasiado corto para enriquecimiento Ollama.",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.subvenciones.gob.es/bdnstrans/A07/es/convocatoria/533909",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "3c7a60aeaf3990b4",
+    "creado_en": "2026-04-18T04:00:02.587054",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Investigación de convocatoria completada.",
+    "query_traza": ""
+  }
+}

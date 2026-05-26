@@ -1,0 +1,43 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.patagonia.com/how-we-fund/"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo extraer el nombre de la convocatoria.",
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.patagonia.com/how-we-fund/",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "018fbfbe2eb65a55",
+    "creado_en": "2026-04-18T04:02:08.882267",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Investigación de convocatoria completada.",
+    "query_traza": ""
+  }
+}

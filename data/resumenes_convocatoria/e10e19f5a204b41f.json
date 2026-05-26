@@ -1,0 +1,43 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.cultura.gob.es/cultura/derechos-culturales/ayudas-dgddcc/ayudas-impacto-social.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRLEilleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaekpikdu_e_MtGrQKqDpEHijJWAuc_KQKACVmaUUlmqaTy3X-KUVchzDz7kkg_aem_fBChbqlejUgd0_iJrYT04A"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo descargar o parsear la ficha objetivo.",
+    "Contexto demasiado corto para enriquecimiento Ollama.",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.cultura.gob.es/cultura/derechos-culturales/ayudas-dgddcc/ayudas-impacto-social.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRLEilleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAaekpikdu_e_MtGrQKqDpEHijJWAuc_KQKACVmaUUlmqaTy3X-KUVchzDz7kkg_aem_fBChbqlejUgd0_iJrYT04A",
+      "tipo": "ficha",
+      "oficial": true
+    }
+  ],
+  "metadata": {
+    "resultado_id": "e10e19f5a204b41f",
+    "creado_en": "2026-04-29T04:00:01.352706",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Investigación de convocatoria completada.",
+    "query_traza": ""
+  }
+}

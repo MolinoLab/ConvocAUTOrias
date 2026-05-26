@@ -1,0 +1,83 @@
+{
+  "convocatoria_actual": {
+    "nombre": "Convocatorias para cambiar la forma de alimentarnos y de relacionarnos con el arte",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.fondationcarasso.org/es/convocatorias/#convocatorias"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [
+    {
+      "anio": "2026",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/cuarta-edicion-alianzas/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/tiina-transformacion-e-impacto-a-traves-de-la-inversion-en-alimentacion-y-arte/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/tiina-transformacion-e-impacto-a-traves-de-la-inversion-en-alimentacion-y-arte-2/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/convocatoria-entornos/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/notar-v-convocatoria-de-tres-residencias-de-investigacion/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2025",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/programa-enzima-fermentando-restaurantes-sostenibles/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2025",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/arte-por-venir-2025/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2025",
+      "url_ficha": "https://fondationcarasso.org/es/convocatorias/terralimenta-3/",
+      "estado": "detectada"
+    }
+  ],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.fondationcarasso.org/es/convocatorias/#convocatorias",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "bcf5623620041a24",
+    "creado_en": "2026-04-12T16:02:27.010550",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Convocatorias para cambiar la forma de alimentarnos y de relacionarnos con el arte",
+    "query_traza": ""
+  }
+}

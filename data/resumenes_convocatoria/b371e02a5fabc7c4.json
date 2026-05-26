@@ -1,0 +1,43 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/general/31/3190334/ficha/3190334-2026.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRp4IpleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAadnKJck-WsEwCcYmsKbSwNorhPVulvZtvepRwIhaKOBnItK2xgI0IxVA_NbAg_aem_wnpugKHUidJmMiWPXd3YcA"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo descargar o parsear la ficha objetivo.",
+    "Contexto demasiado corto para enriquecimiento Ollama.",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/general/31/3190334/ficha/3190334-2026.html?utm_source=ig&utm_medium=social&utm_content=link_in_bio&fbclid=PAdGRzdgRp4IpleHRuA2FlbQIxMQBzcnRjBmFwcF9pZA81NjcwNjczNDMzNTI0MjcAAadnKJck-WsEwCcYmsKbSwNorhPVulvZtvepRwIhaKOBnItK2xgI0IxVA_NbAg_aem_wnpugKHUidJmMiWPXd3YcA",
+      "tipo": "ficha",
+      "oficial": true
+    }
+  ],
+  "metadata": {
+    "resultado_id": "b371e02a5fabc7c4",
+    "creado_en": "2026-05-10T04:00:01.375613",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "Investigación de convocatoria completada.",
+    "query_traza": ""
+  }
+}

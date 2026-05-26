@@ -1,0 +1,68 @@
+{
+  "convocatoria_actual": {
+    "nombre": "INAEM abre convocatoria de ayudas para teatro y circo 2025 (España)",
+    "organismo": "Ministerio de Cultura, ha abierto el plazo de solicitud de la convocatoria de las ayudas al teatro y al circo, en régimen de concurren",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "https://www.boe.es/boe/dias/2025/02/26/pdfs/BOE-B-2025-6983.pdf",
+      "bdns": "",
+      "resolucion_convocatoria": "https://www.cultura.gob.es/dam/jcr:d69df0ce-c9b2-4a10-b77c-16f1e4c89668/convocatoria-ayudas-teatro-circo-2025.pdf"
+    },
+    "url_objetivo": "https://www.recursosculturales.com/inaem-ayudas-danza-lirica-musica/"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/epson-internacional-pano-awards/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/ibermedia-ayudas-coproduccion-series-proyectos-formacion/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/residencia-micro-raro/",
+      "estado": "detectada"
+    }
+  ],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.recursosculturales.com/inaem-ayudas-danza-lirica-musica/",
+      "tipo": "ficha",
+      "oficial": false
+    },
+    {
+      "url": "https://www.boe.es/boe/dias/2025/02/26/pdfs/BOE-B-2025-6983.pdf",
+      "tipo": "boe",
+      "oficial": true
+    },
+    {
+      "url": "https://www.cultura.gob.es/dam/jcr:d69df0ce-c9b2-4a10-b77c-16f1e4c89668/convocatoria-ayudas-teatro-circo-2025.pdf",
+      "tipo": "resolucion",
+      "oficial": true
+    }
+  ],
+  "metadata": {
+    "resultado_id": "2808aa709b9e4461",
+    "creado_en": "2026-04-12T16:04:42.159630",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "INAEM abre convocatoria de ayudas para teatro y circo 2025 (España)",
+    "query_traza": ""
+  }
+}

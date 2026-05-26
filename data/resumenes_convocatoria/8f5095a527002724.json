@@ -1,0 +1,35 @@
+{
+  "convocatoria_actual": {
+    "nombre": "",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html"
+  },
+  "ediciones_anteriores": [],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "No se pudo descargar o parsear la ficha objetivo.",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.cultura.gob.es/servicios-a-la-ciudadania/catalogo/becas-ayudas-y-subvenciones/ayudas-y-subvenciones/industrias/modernizacion-innovacion-industrias-culturales.html",
+      "tipo": "ficha",
+      "oficial": true
+    }
+  ],
+  "metadata": {
+    "resultado_id": "8f5095a527002724",
+    "creado_en": "2026-04-09T19:56:34.936223",
+    "version_pipeline": "convocatoria-html-v1",
+    "resumen_corto": "Investigación de convocatoria completada."
+  }
+}

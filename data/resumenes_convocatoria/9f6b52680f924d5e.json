@@ -1,0 +1,63 @@
+{
+  "convocatoria_actual": {
+    "nombre": "IBERMEMORIA: apoyo a proyectos de preservación, acceso y salvaguarda del patrimonio sonoro, fotográfico y audiovisual de Iberoamérica",
+    "organismo": "",
+    "plazo": "",
+    "presupuesto": "",
+    "beneficiarios": "",
+    "sectores": "",
+    "enlaces": {
+      "boe": "",
+      "bdns": "",
+      "resolucion_convocatoria": ""
+    },
+    "url_objetivo": "https://www.recursosculturales.com/convocatoria-ibermemoria/"
+  },
+  "detalle_ayuda": {
+    "gastos_financiables": "",
+    "intensidad_cofinanciacion": "",
+    "documentacion_clave": "",
+    "resumen_ejecutivo": ""
+  },
+  "ediciones_anteriores": [
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/convocatoria-de-proyectos-sociales-la-caixa/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/muse-design-awards-2/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2026",
+      "url_ficha": "https://www.recursosculturales.com/ibermedia-ayudas-coproduccion-series-proyectos-formacion/",
+      "estado": "detectada"
+    },
+    {
+      "anio": "2024",
+      "url_ficha": "https://www.recursosculturales.com/festival-internacional-de-cine-de-monterrey/",
+      "estado": "detectada"
+    }
+  ],
+  "ejemplos_financiados": [],
+  "advertencias": [
+    "Error de red o timeout al llamar a Ollama (detalle ayuda).",
+    "No se han encontrado ejemplos verificables en HTML para las ediciones detectadas."
+  ],
+  "fuentes": [
+    {
+      "url": "https://www.recursosculturales.com/convocatoria-ibermemoria/",
+      "tipo": "ficha",
+      "oficial": false
+    }
+  ],
+  "metadata": {
+    "resultado_id": "9f6b52680f924d5e",
+    "creado_en": "2026-04-14T16:02:21.143708",
+    "version_pipeline": "convocatoria-html-v2",
+    "resumen_corto": "IBERMEMORIA: apoyo a proyectos de preservación, acceso y salvaguarda del patrimonio sonoro, fotográfico y audiovisual de Iberoamérica",
+    "query_traza": ""
+  }
+}
