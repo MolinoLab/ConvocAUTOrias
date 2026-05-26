@@ -121,6 +121,7 @@ NEXTCLOUD_DATOS_CSV_PATH = os.getenv(
 DECK_BOARD_NAME = os.getenv("DECK_BOARD_NAME", "MolinoLab").strip()
 DECK_STACK_NAME = os.getenv("DECK_STACK_NAME", "").strip()
 DECK_STACK_FABRICAR = os.getenv("DECK_STACK_FABRICAR", "Fabricar").strip()
+DECK_STACK_VOLUNTARIOS = os.getenv("DECK_STACK_VOLUNTARIOS", "Voluntarios").strip()
 
 # JSON: {"telegram_username_sin_arroba": "nextcloud_uid", ...}
 _deck_assign_raw = os.getenv("DECK_ASSIGNEE_BY_TELEGRAM_USERNAME", "").strip()

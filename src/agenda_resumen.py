@@ -4,7 +4,7 @@ Usa APP_TIMEZONE vía fecha_hoy_relativas.
 """
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import timedelta
 
 from src.caldav_client import (
     listar_eventos_en_ventana,
@@ -12,7 +12,11 @@ from src.caldav_client import (
     obtener_ultimo_error_evento,
 )
 from src.deck_client import listar_tareas_deck, obtener_ultimo_error_deck
-from src.fecha_display import fecha_hoy_relativas, formatear_dia_mes_sin_anio
+from src.fecha_display import (
+    fecha_hoy_relativas,
+    formatear_dia_mes_sin_anio,
+    ventana_dia_local,
+)
 
 
 def texto_agenda_proximos_dias(
@@ -28,7 +32,7 @@ def texto_agenda_proximos_dias(
     """
     dias = max(1, int(dias))
     hoy = fecha_hoy_relativas()
-    win_start = datetime.combine(hoy, time.min)
+    win_start, win_end_excl = ventana_dia_local(hoy)
     win_end_excl = win_start + timedelta(days=dias)
     iso_ini = hoy.isoformat()
     iso_fin_inc = (hoy + timedelta(days=dias - 1)).isoformat()

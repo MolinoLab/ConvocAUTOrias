@@ -4,7 +4,7 @@ Formato de fechas solo para mostrar al usuario (CSV/DB siguen en ISO).
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import config
@@ -28,6 +28,32 @@ def _zona() -> ZoneInfo:
 def fecha_hoy_relativas() -> date:
     """Fecha local según APP_TIMEZONE (defecto Europe/Madrid)."""
     return datetime.now(_zona()).date()
+
+
+def ahora_local() -> datetime:
+    """Momento actual en APP_TIMEZONE (naive, hora de pared local)."""
+    return datetime.now(_zona()).replace(tzinfo=None)
+
+
+def ventana_dia_local(fecha: date) -> tuple[datetime, datetime]:
+    """
+    Ventana [inicio, fin) del día `fecha` en hora local (APP_TIMEZONE).
+    Devuelve datetimes naive comparables con listar_eventos_en_ventana.
+    """
+    win_start = datetime.combine(fecha, time.min)
+    win_end_excl = win_start + timedelta(days=1)
+    return win_start, win_end_excl
+
+
+def lunes_semana_entrante(hoy: date) -> date:
+    """
+    Lunes de la semana entrante según el día de envío:
+    - Domingo: lunes siguiente (mañana).
+    - Lunes–sábado: lunes de la semana en curso (no saltar +7 días).
+    """
+    if hoy.weekday() == 6:
+        return hoy + timedelta(days=1)
+    return hoy - timedelta(days=hoy.weekday())
 
 
 _MES_NUM_A_NOMBRE: dict[int, str] = {v: k for k, v in MESES_LARGO.items()}

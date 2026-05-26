@@ -200,7 +200,12 @@ def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> l
     """
     Calendarios visibles para agenda: equipo (CALDAV_AGENDA_CALENDAR_NAMES o CALDAV_CALENDAR_NAMES)
     más, si aplica, el calendario personal mapeado para ese usuario de Telegram.
+    Si hay nombres de equipo configurados pero ninguno coincide, no hace fallback a
+    CALDAV_CALENDAR_URL (suele ser un solo calendario personal).
     """
+    import logging
+
+    log = logging.getLogger(__name__)
     try:
         principal = client.principal()
         all_cals = list(principal.calendars())
@@ -218,6 +223,17 @@ def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> l
     if team_names:
         out = _calendarios_filtrados_por_nombres(all_cals, team_names)
         seen_urls = {str(getattr(c, "url", "") or "").strip() for c in out if getattr(c, "url", None)}
+        if not out:
+            visibles = [_etiqueta_calendario(c) for c in all_cals[:25]]
+            log.warning(
+                "Agenda CalDAV: ningun calendario coincide con %s. "
+                "Revisa CALDAV_AGENDA_CALENDAR_NAMES. Visibles: %s",
+                team_names,
+                visibles,
+            )
+            _set_last_evento_error(
+                f"Ningun calendario de agenda coincide con: {', '.join(team_names)}"
+            )
 
     un = (telegram_username or "").strip().lstrip("@").lower()
     if un and config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM:
@@ -232,6 +248,8 @@ def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> l
 
     if out:
         return out
+    if team_names:
+        return []
     return _resolve_target_calendars(client)
 
 

@@ -212,6 +212,7 @@ _WHISPER_MODEL = None
 
 # Stack Deck para lista de compras (nombre exacto en Nextcloud Deck)
 DECK_STACK_COMPRAR = "Comprar"
+DECK_STACK_VOLUNTARIOS = (config.DECK_STACK_VOLUNTARIOS or "Voluntarios").strip()
 
 # context.chat_data: caché del último listado para /rm* (mismo chat)
 CACHE_RM_FUNC_IDS = "rm_func_ids"
@@ -383,6 +384,7 @@ _TIPOS_MV_VALIDOS = frozenset(
         "funcionalidad",
         "investiga",
         "comprar",
+        "voluntarios",
         "fabrica",
         "diario",
     }
@@ -644,6 +646,7 @@ _ACCIONES_AUDIO = frozenset(
         "tarea",
         "evento",
         "comprar",
+        "voluntarios",
         "fabrica",
         "fab",
         "investiga",
@@ -651,7 +654,11 @@ _ACCIONES_AUDIO = frozenset(
         "diario",
     }
 )
-_ACCION_AUDIO_SINONIMOS: dict[str, str] = {"eventos": "evento", "compra": "comprar"}
+_ACCION_AUDIO_SINONIMOS: dict[str, str] = {
+    "eventos": "evento",
+    "compra": "comprar",
+    "voluntario": "voluntarios",
+}
 
 
 def _parsear_accion_audio(texto: str) -> tuple[str | None, str]:
@@ -688,10 +695,11 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Tiempos] /tiempo /tiempofin /listtiempo /vertiempo /modtiempo\n"
         "[Funcionalidades] /func /listfunc /verfunc /modfunc /rmfunc\n"
         "[Investigaciones] /investiga /listinvestigaciones /verinvestigacion /modinv /rminvestigacion\n"
-        "[Deck] /tarea /comprar /listtareas /vertarea /modtarea /rmtarea\n"
+        f"[Deck] /tarea /comprar /voluntarios (columna {DECK_STACK_VOLUNTARIOS}) "
+        "/listtareas /vertarea /modtarea /rmtarea\n"
         f"[Fabricar] /fabrica /fab /listfab /verfab /modfab /rmfab (columna {config.DECK_STACK_FABRICAR or 'Fabricar'})\n"
         "[CalDAV] /evento /listeventos /informame /info [dias] /verevento /modevento /rmevento\n"
-        "[Huevos] /huevos /listhuevos /listregistroshuevos /verhuevo /modhuevo /rmhuevo\n"
+        "[Huevos] /huevos [para el fecha] /listhuevos — /modhuevo solo corrige registros existentes\n"
         "[Diario] /diario /listdiario /verdiario /moddiario /rmdiario\n"
         "[Recomendaciones] /rec /listrecomendaciones /verrec /modrec /rmrec\n"
         "[Notas NC] /notas /listnotas /vernota /modnota /rmnota (cred. en .env)\n"
@@ -699,8 +707,9 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Pendientes] /listpendientes /verpendiente /modpendiente /rmpendientes /mvpendiente\n"
         "[Descarga VPS] /descarga <url o busqueda> — yt-dlp en carpeta configurada\n"
         "[IoT] /enchufeestado /enchufeen /enchufeapagar /impresoraestado /impresoraapagar\n"
-        "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, fabrica, fab, "
-        "evento, investiga, huevos, diario; si no, pendiente. Fechas: «para el …» / «para …». "
+        "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, voluntarios, "
+        "fabrica, fab, evento, investiga, huevos, diario; si no, pendiente. "
+        "Fechas: «para el …» / «para …». "
         "/ayuda — esta lista"
     )
     await _reply_texto_largo(update, texto)
@@ -3137,6 +3146,33 @@ async def cmd_comprar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
 
 
+async def cmd_voluntarios(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+
+    texto_raw = (update.message.text or "").strip()
+    if texto_raw.startswith("/voluntarios"):
+        texto_raw = texto_raw[len("/voluntarios") :].strip()
+    elif texto_raw.startswith("/voluntario"):
+        texto_raw = texto_raw[len("/voluntario") :].strip()
+
+    if not texto_raw:
+        await update.message.reply_text(
+            f'Uso: /voluntarios "Titulo" [fecha] ["Descripcion"] — tarea en columna Deck '
+            f'"{DECK_STACK_VOLUNTARIOS}".\n'
+            "Fecha: DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD o antier/ayer/hoy/mañana/pasado (opcional)."
+        )
+        return
+
+    await _ejecutar_creacion_tarea_deck(
+        update,
+        texto_raw,
+        stack_name=DECK_STACK_VOLUNTARIOS,
+        prefijo_exito="Tarea de voluntarios anotada",
+    )
+
+
 async def _crear_fabrica_desde_texto(
     update: Update,
     texto_raw: str,
@@ -3915,8 +3951,11 @@ async def _iniciar_mod_lista(
             eid = ent.id
     if not ent or not eid:
         _ck, _cf, lista_cmd = MOD_LISTA_CAMPOS[kind]
+        extra = ""
+        if kind == "huevo":
+            extra = "\nPara un dia olvidado sin registro: /huevos <cantidad> para el <fecha>."
         await update.message.reply_text(
-            f"No se encontro ese registro.\nUsa {lista_cmd} en este chat."
+            f"No se encontro ese registro.\nUsa {lista_cmd} en este chat.{extra}"
         )
         return
     user = update.effective_user
@@ -5756,7 +5795,8 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if len(args) < 2:
         await update.message.reply_text(
             "Uso: /mvpendiente <n|id> <tipo> [args extra]\n"
-            "tipo: idea, memoria, tarea, evento, funcionalidad (o func), investiga, comprar, fabrica (o fab), diario\n"
+            "tipo: idea, memoria, tarea, evento, funcionalidad (o func), investiga, "
+            "comprar, voluntarios, fabrica (o fab), diario\n"
             "Ejemplo: /mvpendiente 1 tarea \"Titulo\" 25-03-2026"
         )
         return
@@ -5768,6 +5808,8 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         tipo = "fabrica"
     if tipo == "compra":
         tipo = "comprar"
+    if tipo == "voluntario":
+        tipo = "voluntarios"
     if tipo not in _TIPOS_MV_VALIDOS:
         await update.message.reply_text(
             f"Tipo no valido: {tipo_in}. Usa: {', '.join(sorted(_TIPOS_MV_VALIDOS))} o func"
@@ -5812,6 +5854,14 @@ async def cmd_mvpendiente(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             combo,
             stack_name=DECK_STACK_COMPRAR,
             prefijo_exito="Compra anotada",
+        ):
+            ok_fin = True
+    elif tipo == "voluntarios":
+        if await _ejecutar_creacion_tarea_deck(
+            update,
+            combo,
+            stack_name=DECK_STACK_VOLUNTARIOS,
+            prefijo_exito="Tarea de voluntarios anotada",
         ):
             ok_fin = True
     elif tipo == "fabrica":
@@ -6730,6 +6780,49 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                     f"{deck_error or 'sin detalle'}"
                 )
 
+        elif accion == "voluntarios":
+            titulo_v, fecha_v, descripcion_v = _parsear_tarea_audio_payload(contenido)
+            if not titulo_v:
+                await estado.edit_text(
+                    f'Indica la tarea tras "voluntarios", ej. voluntarios preparar merienda.\n'
+                    f'(columna Deck "{DECK_STACK_VOLUNTARIOS}")'
+                )
+                return
+            if fecha_v:
+                try:
+                    datetime.strptime(fecha_v, "%Y-%m-%d")
+                except ValueError:
+                    await estado.edit_text(
+                        f"Fecha invalida en audio: {fecha_v}\n"
+                        "Tras 'para'/'para el': DD-MM-AAAA, DD-MM, DD, YYYY-MM-DD, hoy/mañana o día de la semana"
+                    )
+                    return
+            ok, _, _, _ = crear_tarea_deck(
+                titulo_v,
+                descripcion=descripcion_v,
+                fecha_due=fecha_v,
+                stack_name=DECK_STACK_VOLUNTARIOS,
+                assigned_user_uids=_deck_uids_para_update(update),
+            )
+            if ok:
+                lineas = [
+                    f'Tarea de voluntarios en Deck ({config.DECK_BOARD_NAME}) '
+                    f"[{DECK_STACK_VOLUNTARIOS}] desde audio.",
+                    f"Titulo: {titulo_v}",
+                ]
+                if fecha_v:
+                    lineas.append(f"Fecha limite: {fecha_v}")
+                aviso_asg = obtener_ultimo_aviso_asignacion_deck()
+                if aviso_asg:
+                    lineas.append(aviso_asg)
+                await estado.edit_text("\n".join(lineas))
+            else:
+                deck_error = obtener_ultimo_error_deck()
+                await estado.edit_text(
+                    "No se pudo crear la tarjeta de voluntarios en Deck desde audio.\n"
+                    f"{deck_error or 'sin detalle'}"
+                )
+
         elif accion in ("fabrica", "fab"):
             if not contenido.strip():
                 await estado.edit_text(
@@ -6821,15 +6914,26 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             cant_h = _primer_entero_positivo(contenido)
             if cant_h is None:
                 await estado.edit_text(
-                    "Di huevos y un numero entero positivo, ej. huevos 12"
+                    "Di huevos y un numero entero positivo, ej. huevos 12 o huevos 8 para ayer"
                 )
                 return
-            hoy_h = datetime.now().strftime("%Y-%m-%d")
-            añadir_huevo(cant_h, hoy_h, fuente="telegram_audio")
-            total_h = total_cantidad_en_fecha(hoy_h)
+            fecha_h = fecha_hoy_relativas().isoformat()
+            resto_h = contenido.strip()
+            if resto_h:
+                num_match = re.search(r"\b\d+\b", resto_h)
+                if num_match:
+                    resto_h = (resto_h[num_match.end() :] or "").strip()
+                if resto_h:
+                    if not resto_h.lower().startswith("para "):
+                        resto_h = f"para {resto_h}"
+                    _, fecha_parseada = extraer_cuerpo_y_fecha_dia_para_el(f"x {resto_h}")
+                    if fecha_parseada:
+                        fecha_h = fecha_parseada
+            añadir_huevo(cant_h, fecha_h, fuente="telegram_audio")
+            total_h = total_cantidad_en_fecha(fecha_h)
             await estado.edit_text(
                 f"Huevos registrados desde audio.\n"
-                f"Fecha: {hoy_h}\n"
+                f"Fecha: {fecha_h}\n"
                 f"Esta vez: {cant_h}\n"
                 f"Total del dia: {total_h}"
             )
@@ -6989,6 +7093,8 @@ def main() -> None:
     app.add_handler(CommandHandler("tarea", cmd_tarea))
     app.add_handler(CommandHandler("comprar", cmd_comprar))
     app.add_handler(CommandHandler("compra", cmd_comprar))
+    app.add_handler(CommandHandler("voluntarios", cmd_voluntarios))
+    app.add_handler(CommandHandler("voluntario", cmd_voluntarios))
     app.add_handler(CommandHandler("fabrica", cmd_fabrica))
     app.add_handler(CommandHandler("fab", cmd_fab))
     app.add_handler(CommandHandler("listfab", cmd_listfab))

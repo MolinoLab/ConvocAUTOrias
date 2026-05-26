@@ -1,42 +1,28 @@
 """
-Domingo por la noche (previsto vía n8n): resumen de la semana siguiente (lunes a domingo)
-en APP_TIMEZONE — eventos CalDAV (todos los calendarios configurados), Deck y VTODO.
+Domingo por la noche (previsto vía n8n): resumen de la semana entrante (lunes a domingo)
+en APP_TIMEZONE — eventos CalDAV (calendarios de agenda), Deck y VTODO.
 Si no hay nada en la ventana, no envía mensaje por Telegram.
 """
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
 from src.caldav_client import listar_eventos_en_ventana, listar_tareas
 from src.deck_client import listar_tareas_deck
-from src.fecha_display import formatear_dia_mes_sin_anio
+from src.fecha_display import (
+    ahora_local,
+    formatear_dia_mes_sin_anio,
+    lunes_semana_entrante,
+    ventana_dia_local,
+)
 from src.notifier import enviar_mensaje_a_chats
 
 CHUNK = 4000
-
-
-def _zona() -> ZoneInfo:
-    name = (config.APP_TIMEZONE or "Europe/Madrid").strip()
-    try:
-        return ZoneInfo(name)
-    except Exception:
-        return ZoneInfo("Europe/Madrid")
-
-
-def _lunes_semana_siguiente(hoy: date) -> date:
-    """Desde un domingo devuelve el lunes siguiente; otros días: próximo lunes."""
-    if hoy.weekday() == 6:
-        return hoy + timedelta(days=1)
-    dias = (7 - hoy.weekday()) % 7
-    if dias == 0:
-        dias = 7
-    return hoy + timedelta(days=dias)
 
 
 def _enviar_largo(texto: str) -> bool:
@@ -46,14 +32,14 @@ def _enviar_largo(texto: str) -> bool:
 
 
 def main() -> int:
-    tz = _zona()
-    hoy = datetime.now(tz).date()
-    lunes = _lunes_semana_siguiente(hoy)
+    hoy = ahora_local().date()
+    generado = ahora_local().strftime("%d-%m-%Y %H:%M")
+    lunes = lunes_semana_entrante(hoy)
     domingo = lunes + timedelta(days=6)
     iso_lun = lunes.isoformat()
     iso_dom = domingo.isoformat()
 
-    win_start = datetime.combine(lunes, time.min)
+    win_start, _ = ventana_dia_local(lunes)
     win_end_excl = win_start + timedelta(days=7)
 
     eventos = listar_eventos_en_ventana(win_start, win_end_excl, agenda_telegram_username=None)
@@ -73,15 +59,14 @@ def main() -> int:
     if not eventos and not deck and not vtodos:
         print(
             f"Nada en la semana {formatear_dia_mes_sin_anio(iso_lun)} a "
-            f"{formatear_dia_mes_sin_anio(iso_dom)} ({tz.key}). No se envía Telegram."
+            f"{formatear_dia_mes_sin_anio(iso_dom)} ({config.APP_TIMEZONE}). No se envía Telegram."
         )
         return 0
 
     rango = f"{formatear_dia_mes_sin_anio(iso_lun)} a {formatear_dia_mes_sin_anio(iso_dom)}"
     lineas = [
-        f"Agenda de la semana ({rango}, {tz.key}).\n",
-        "Calendarios de equipo: CALDAV_AGENDA_CALENDAR_NAMES (o CALDAV_CALENDAR_NAME). "
-        "Personales solo en el bot si aplica tu usuario.\n",
+        f"Agenda de la semana ({rango}, {config.APP_TIMEZONE}).\n",
+        f"Generado: {generado}\n",
         "Próximos días en el bot: /informame o /info [n]\n\n",
     ]
 

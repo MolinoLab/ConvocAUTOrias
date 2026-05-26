@@ -183,6 +183,7 @@ NEXTCLOUD_PASSWORD=tu_password
 # NEXTCLOUD_CARPETA=Documents/b1tacora/b1tdreamer/Convocatorias
 DECK_BOARD_NAME=MolinoLab
 # DECK_STACK_NAME=Pendientes
+# DECK_STACK_VOLUNTARIOS=Voluntarios
 # Asignar tarjetas Deck al crear tareas desde Telegram (uid de usuario en Nextcloud Deck):
 # DECK_ASSIGNEE_BY_TELEGRAM_USERNAME={"miusuario":"uid-deck"}
 # Si la persona no tiene @username público, usa su id numérico de Telegram:
@@ -196,6 +197,9 @@ CALDAV_PASS=tu_password
 # Nombre(s) del calendario (slug en URL o nombre mostrado). Varios: MolinoLab, Personal
 # Deja vacío solo si quieres considerar todos los calendarios de la cuenta.
 CALDAV_CALENDAR_NAME=MolinoLab
+# Calendarios solo para agenda programada (/informame, recordatorios n8n). Varios nombres separados por coma.
+# Incluye el calendario compartido (p. ej. MolinoLab); el matcher acepta *_shared_by_* en Nextcloud.
+# CALDAV_AGENDA_CALENDAR_NAMES=MolinoLab
 # Opcional: URL exacta de la colección del calendario (sustituye al filtro por nombre)
 # CALDAV_CALENDAR_URL=https://tu-nextcloud.com/remote.php/dav/calendars/usuario/molinolab/
 # Si CALDAV_USER es otra cuenta (p. ej. bot de servicio), el segmento .../calendars/USUARIO/...
@@ -258,7 +262,7 @@ El bot permite varios flujos:
    - Persistencia en `data/funcionalidad.csv` (o `data/funcionalidad.db` si existe SQLite).
    - API: `GET /funcionalidad` (listar), `POST /funcionalidad` (crear).
 
-Otros comandos del bot: tareas Nextcloud Deck (`/tarea`, `/listtareas`, …), eventos CalDAV (`/evento`, `/listeventos`, …), huevos (`/huevos`, `/listhuevos`). Ver `/ayuda` en Telegram.
+Otros comandos del bot: tareas Nextcloud Deck (`/tarea`, `/comprar`, `/voluntarios`, `/listtareas`, …), eventos CalDAV (`/evento`, `/listeventos`, …), huevos (`/huevos 12 para ayer`, `/listhuevos`). Ver `/ayuda` en Telegram.
 
 Flujo diario de ideas manuales:
 - El workflow `04-indexar-ideas.json` llama al endpoint `POST /indexar-ideas`.
