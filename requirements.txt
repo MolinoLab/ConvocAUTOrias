@@ -1,6 +1,9 @@
 # Bot Telegram
 python-telegram-bot>=21.0
 
+# Agente Cursor local (/agente)
+cursor-sdk>=1.0.24
+
 # Scraping
 requests>=2.31.0
 beautifulsoup4>=4.12.0

@@ -1,7 +1,8 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
 ideas, memorias, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
-tareas Deck, fabricación (Fabricar), eventos CalDAV, huevos, diario, pendientes (audio), audio. Ver /ayuda.
+tareas Deck, fabricación (Fabricar), eventos CalDAV, huevos, diario, pendientes (audio),
+agente Cursor (/agente), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
 """
 import asyncio
@@ -707,12 +708,145 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Pendientes] /listpendientes /verpendiente /modpendiente /rmpendientes /mvpendiente\n"
         "[Descarga VPS] /descarga <url o busqueda> — yt-dlp en carpeta configurada\n"
         "[IoT] /enchufeestado /enchufeen /enchufeapagar /impresoraestado /impresoraapagar\n"
+        "[Cursor] /agente <prompt> — agente local (MCP proyecto); /agentenuevo /agentefin /agentestatus\n"
         "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, voluntarios, "
         "fabrica, fab, evento, investiga, huevos, diario; si no, pendiente. "
         "Fechas: «para el …» / «para …». "
         "/ayuda — esta lista"
     )
     await _reply_texto_largo(update, texto)
+
+
+async def cmd_agente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lanza o reanuda un agente local de Cursor (SDK + MCP del proyecto)."""
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /agente <prompt>\n"
+            "Reanuda la sesión del chat si existe. "
+            "/agentenuevo <prompt> fuerza una sesión nueva. "
+            "/agentefin cierra la sesión. /agentestatus muestra el agent_id."
+        )
+        return
+    if not config.CURSOR_API_KEY:
+        await update.message.reply_text(
+            "CURSOR_API_KEY no está en .env. Crea una clave en "
+            "https://cursor.com/dashboard/integrations y reinicia el bot."
+        )
+        return
+
+    from src.cursor_agente import ejecutar_prompt
+
+    prompt = " ".join(context.args).strip()
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    aviso = await update.message.reply_text(
+        f"Agente Cursor ({config.CURSOR_MODEL}) en {config.CURSOR_AGENT_CWD}…"
+    )
+    resultado = await ejecutar_prompt(prompt, chat_id=chat_id, nuevo=False)
+    try:
+        await aviso.delete()
+    except Exception:
+        pass
+    if resultado.error and resultado.status == "error" and not resultado.texto:
+        await update.message.reply_text(f"Error: {resultado.error}")
+        return
+    cabecera = ""
+    if resultado.agent_id:
+        cabecera = f"[agent {resultado.agent_id[:12]}…]\n"
+    if resultado.error:
+        cabecera += f"(aviso: {resultado.error})\n"
+    await _reply_texto_largo(update, cabecera + (resultado.texto or "(vacío)"))
+
+
+async def cmd_agentenuevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Igual que /agente pero ignora la sesión previa del chat."""
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not update.message:
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /agentenuevo <prompt>")
+        return
+    if not config.CURSOR_API_KEY:
+        await update.message.reply_text(
+            "CURSOR_API_KEY no está en .env. Crea una clave en "
+            "https://cursor.com/dashboard/integrations y reinicia el bot."
+        )
+        return
+
+    from src.cursor_agente import ejecutar_prompt
+
+    prompt = " ".join(context.args).strip()
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    aviso = await update.message.reply_text(
+        f"Nuevo agente Cursor ({config.CURSOR_MODEL})…"
+    )
+    resultado = await ejecutar_prompt(prompt, chat_id=chat_id, nuevo=True)
+    try:
+        await aviso.delete()
+    except Exception:
+        pass
+    if resultado.error and resultado.status == "error" and not resultado.texto:
+        await update.message.reply_text(f"Error: {resultado.error}")
+        return
+    cabecera = ""
+    if resultado.agent_id:
+        cabecera = f"[agent {resultado.agent_id[:12]}…]\n"
+    if resultado.error:
+        cabecera += f"(aviso: {resultado.error})\n"
+    await _reply_texto_largo(update, cabecera + (resultado.texto or "(vacío)"))
+
+
+async def cmd_agentefin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not update.message:
+        return
+    from src.cursor_agente import borrar_agent_id
+
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    if chat_id is None:
+        await update.message.reply_text("No hay chat_id.")
+        return
+    if borrar_agent_id(chat_id):
+        await update.message.reply_text("Sesión de agente cerrada. El próximo /agente creará una nueva.")
+    else:
+        await update.message.reply_text("No había sesión de agente activa en este chat.")
+
+
+async def cmd_agentestatus(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not update.message:
+        return
+    from src.cursor_agente import obtener_agent_id
+
+    chat_id = update.effective_chat.id if update.effective_chat else None
+    aid = obtener_agent_id(chat_id) if chat_id is not None else None
+    if not aid:
+        await update.message.reply_text(
+            "Sin sesión activa.\n"
+            f"Modelo: {config.CURSOR_MODEL}\n"
+            f"CWD: {config.CURSOR_AGENT_CWD}\n"
+            f"API key: {'sí' if config.CURSOR_API_KEY else 'no'}\n"
+            f"MCP Telegram inline: {'sí' if config.CURSOR_AGENTE_TELEGRAM_MCP else 'no'}\n"
+            f"setting_sources: {', '.join(config.CURSOR_AGENTE_SETTING_SOURCES) or '(ninguno)'}"
+        )
+        return
+    await update.message.reply_text(
+        f"Sesión activa: {aid}\n"
+        f"Modelo: {config.CURSOR_MODEL}\n"
+        f"CWD: {config.CURSOR_AGENT_CWD}\n"
+        f"MCP Telegram inline: {'sí' if config.CURSOR_AGENTE_TELEGRAM_MCP else 'no'}\n"
+        f"setting_sources: {', '.join(config.CURSOR_AGENTE_SETTING_SOURCES) or '(ninguno)'}"
+    )
 
 
 async def cmd_descarga(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -7014,6 +7148,10 @@ def main() -> None:
 
     app = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler("ayuda", cmd_ayuda))
+    app.add_handler(CommandHandler("agente", cmd_agente))
+    app.add_handler(CommandHandler("agentenuevo", cmd_agentenuevo))
+    app.add_handler(CommandHandler("agentefin", cmd_agentefin))
+    app.add_handler(CommandHandler("agentestatus", cmd_agentestatus))
     app.add_handler(CommandHandler("descarga", cmd_descarga))
     app.add_handler(CommandHandler("enchufeestado", cmd_enchufeestado))
     app.add_handler(CommandHandler("enchufeen", cmd_enchufeen))

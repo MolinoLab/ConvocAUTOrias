@@ -142,6 +142,19 @@ TELEGRAM_ALLOWLIST=@b1tdreamer
 # Usuarios sin @username en Telegram: añade su ID numérico separado por comas, p. ej.:
 # TELEGRAM_ALLOWLIST=@yo,5088114697
 
+# Cursor Agent local (/agente en Telegram, runtime en el contenedor bot)
+# Clave en https://cursor.com/dashboard/integrations
+# CURSOR_API_KEY=cursor_...
+# CURSOR_MODEL=composer-2.5
+# CURSOR_AGENT_CWD=/app
+# CURSOR_AGENT_TIMEOUT_SEC=600
+# Capas MCP/settings del SDK: project lee .cursor/mcp.json del repo
+# CURSOR_AGENTE_SETTING_SOURCES=project
+# Inyectar MCP Telegram al agente (mismo token; evita getUpdates en paralelo)
+# CURSOR_AGENTE_TELEGRAM_MCP=false
+# JSON opcional de servidores MCP inline extra
+# CURSOR_AGENTE_MCP_JSON=
+
 # Ollama (en Docker usa http://ollama:11434)
 OLLAMA_URL=http://localhost:11434
 OLLAMA_MODEL=phi3:mini
@@ -262,7 +275,24 @@ El bot permite varios flujos:
    - Persistencia en `data/funcionalidad.csv` (o `data/funcionalidad.db` si existe SQLite).
    - API: `GET /funcionalidad` (listar), `POST /funcionalidad` (crear).
 
-Otros comandos del bot: tareas Nextcloud Deck (`/tarea`, `/comprar`, `/voluntarios`, `/listtareas`, …), eventos CalDAV (`/evento`, `/listeventos`, …), huevos (`/huevos 12 para ayer`, `/listhuevos`). Ver `/ayuda` en Telegram.
+Otros comandos del bot: tareas Nextcloud Deck (`/tarea`, `/comprar`, `/voluntarios`, `/listtareas`, …), eventos CalDAV (`/evento`, `/listeventos`, …), huevos (`/huevos 12 para ayer`, `/listhuevos`), agente Cursor local (`/agente`, `/agentenuevo`, `/agentefin`, `/agentestatus`). Ver `/ayuda` en Telegram.
+
+### Agente Cursor (`/agente`)
+
+Desde Telegram lanza un **agente local** del [Cursor SDK](https://cursor.com/docs/sdk/python) dentro del contenedor `bot` (workspace `CURSOR_AGENT_CWD`, por defecto `/app`).
+
+1. Añade `CURSOR_API_KEY` en `.env` (Dashboard → Integrations).
+2. Reconstruye la imagen (incluye Node.js para MCP vía `npx` y `cursor-sdk`):
+   ```bash
+   docker compose build bot && docker compose up -d bot
+   ```
+3. Uso:
+   - `/agente resume el README` — crea o **reanuda** la sesión del chat.
+   - `/agentenuevo …` — fuerza un agente nuevo.
+   - `/agentefin` — olvida el `agent_id` del chat.
+   - `/agentestatus` — muestra sesión y config.
+
+MCP del proyecto: [`.cursor/mcp.json`](.cursor/mcp.json) (Telegram Bot API). El agente lo carga si `CURSOR_AGENTE_SETTING_SOURCES` incluye `project`. Para inyectar el MCP Telegram también en línea (mismo token del bot), `CURSOR_AGENTE_TELEGRAM_MCP=true` — evita que el agente llame a `get_updates` mientras el bot hace polling.
 
 Flujo diario de ideas manuales:
 - El workflow `04-indexar-ideas.json` llama al endpoint `POST /indexar-ideas`.

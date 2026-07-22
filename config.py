@@ -13,7 +13,7 @@ DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
 # Versión del bot (armonIA en /ayuda y arranque). Subir el número en cada cambio que despliegues.
-APP_VERSION = os.getenv("APP_VERSION", "0.27").strip() or "0.27"
+APP_VERSION = os.getenv("APP_VERSION", "0.28").strip() or "0.28"
 # Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
 
@@ -265,6 +265,25 @@ if _nc_notes_raw:
 NEXTCLOUD_NOTES_SYNC_NC_USER = os.getenv("NEXTCLOUD_NOTES_SYNC_NC_USER", "").strip()
 NEXTCLOUD_NOTES_SYNC_APP_PASSWORD = os.getenv("NEXTCLOUD_NOTES_SYNC_APP_PASSWORD", "").strip()
 NOTES_SYNC_MAP_PATH = DATA_DIR / "nextcloud_notes_sync_map.json"
+
+# Cursor Agent local (/agente) — SDK en el contenedor del bot
+CURSOR_API_KEY = os.getenv("CURSOR_API_KEY", "").strip()
+CURSOR_MODEL = os.getenv("CURSOR_MODEL", "composer-2.5").strip() or "composer-2.5"
+_cursor_cwd = os.getenv("CURSOR_AGENT_CWD", "").strip()
+CURSOR_AGENT_CWD = Path(_cursor_cwd) if _cursor_cwd else DIR_PROYECTO
+if not CURSOR_AGENT_CWD.is_absolute():
+    CURSOR_AGENT_CWD = DIR_PROYECTO / CURSOR_AGENT_CWD
+CURSOR_AGENT_TIMEOUT_SEC = max(60, int(os.getenv("CURSOR_AGENT_TIMEOUT_SEC", "600")))
+# Capas de settings locales del SDK: project | user | plugins | all (vacío = solo inline)
+_cursor_sources_raw = os.getenv("CURSOR_AGENTE_SETTING_SOURCES", "project").strip()
+CURSOR_AGENTE_SETTING_SOURCES: list[str] = [
+    p.strip() for p in _cursor_sources_raw.split(",") if p.strip()
+]
+# Si true, inyecta el MCP Telegram (mismo token) al agente. Puede chocar con getUpdates del bot.
+_cursor_tg_mcp = os.getenv("CURSOR_AGENTE_TELEGRAM_MCP", "").strip().lower()
+CURSOR_AGENTE_TELEGRAM_MCP = _cursor_tg_mcp in ("1", "true", "yes", "on")
+# JSON opcional de mcp_servers inline para el agente, p. ej. {"docs":{"type":"stdio","command":"npx",...}}
+CURSOR_AGENTE_MCP_JSON = os.getenv("CURSOR_AGENTE_MCP_JSON", "").strip()
 
 # Investigaciones (/investiga + worker)
 SEARXNG_URL = os.getenv("SEARXNG_URL", "").strip().rstrip("/")

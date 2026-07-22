@@ -2,10 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Dependencias del sistema
+# Dependencias del sistema (Node para MCP vía npx + herramientas del agente)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Dependencias Python
