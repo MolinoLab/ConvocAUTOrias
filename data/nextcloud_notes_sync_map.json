@@ -39,12 +39,24 @@
     "hash": "06c0d6f1d9e56fa3ca8a5f212378342353016cdc608328ac20376054dc9eee1b",
     "note_id": 37119
   },
+  "memorias/hoy_me_desperté_cantando_una.md": {
+    "hash": "a1baf5bfaaed9694e797890f2a85a331f6890e2c529c6c40a49b57430b04cc49",
+    "note_id": 39376
+  },
   "proyectos/41ce00a0e8eb6261.md": {
     "hash": "2d04f0937a9336bb7032655bdee9092f12833c79a2bd9445670fce2bfa91259b",
     "note_id": 35965
   },
+  "proyectos/Castronuño_sala_2.md": {
+    "hash": "6b8557046230f3d7492fef3a7f9d06c50720e714e520546c37c820cdf384e82a",
+    "note_id": 38535
+  },
   "proyectos/Valle_del_Duero_Castronuño.md": {
     "hash": "3dc026223ce8b30d0b8f72e32419fbf44ea4489deaa6f42d1f6d2b2384f0f623",
     "note_id": 35966
+  },
+  "proyectos/Web_audio_splat.md": {
+    "hash": "414478ed1e4e4f24155836aea6f7d3eb3085fe787e2e31b9f19890eab73b15f3",
+    "note_id": 39275
   }
 }
