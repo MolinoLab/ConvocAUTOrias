@@ -1,6 +1,7 @@
 """
 Notifica por Telegram eventos CalDAV y tareas (Deck + VTODO) para mañana
 y tareas vencidas pendientes (due anterior a mañana), en APP_TIMEZONE.
+Incluye calendarios personales configurados y recordatorios /recordar de mañana.
 Si no hay nada, no envía mensaje.
 """
 from __future__ import annotations
@@ -12,7 +13,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from src.caldav_client import listar_eventos_en_ventana, listar_tareas
+from src.agenda_notificaciones import (
+    listar_eventos_agenda_programada,
+    listar_vtodos_agenda_programada,
+)
+from src.db_recordatorios import listar_para_fecha_exacta
 from src.deck_client import listar_tareas_deck
 from src.fecha_display import (
     ahora_local,
@@ -63,16 +68,26 @@ def main() -> int:
     generado = ahora_local().strftime("%d-%m-%Y %H:%M")
     win_start, win_end_excl = ventana_dia_local(d_manana)
 
-    eventos = listar_eventos_en_ventana(win_start, win_end_excl, agenda_telegram_username=None)
+    eventos = listar_eventos_agenda_programada(win_start, win_end_excl)
     deck_all = listar_tareas_deck()
     deck_manana = [t for t in deck_all if (t.get("due") or "") == iso]
     deck_vencidas = _deck_vencidas(deck_all, iso)
 
-    vtodos_all = listar_tareas(include_completed=False, agenda_telegram_username=None)
+    vtodos_all = listar_vtodos_agenda_programada(include_completed=False)
     vtodos_manana = [t for t in vtodos_all if (t.get("due") or "") == iso]
     vtodos_vencidas = _vtodos_vencidas(vtodos_all, iso)
+    recordatorios_manana = [
+        r for r in listar_para_fecha_exacta(iso) if r.fecha != "siempre"
+    ]
 
-    if not eventos and not deck_manana and not deck_vencidas and not vtodos_manana and not vtodos_vencidas:
+    if (
+        not eventos
+        and not deck_manana
+        and not deck_vencidas
+        and not vtodos_manana
+        and not vtodos_vencidas
+        and not recordatorios_manana
+    ):
         print(
             f"Nada pendiente para mañana ni vencidas ({formatear_dia_mes_sin_anio(iso)}, "
             f"{config.APP_TIMEZONE}). No se envia Telegram."
@@ -120,6 +135,14 @@ def main() -> int:
             cal = t.get("calendario")
             suf = f" ({cal})" if cal else ""
             lineas.append(f"  •{suf} {t.get('summary') or '(sin titulo)'}")
+        lineas.append("")
+
+    if recordatorios_manana:
+        lineas.append("Recordatorios (/recordar) para mañana:")
+        for r in recordatorios_manana:
+            pref = "[siempre] " if r.fecha == "siempre" else ""
+            usr = f" ({r.username})" if r.username else ""
+            lineas.append(f"  • {pref}{r.texto}{usr}")
         lineas.append("")
 
     texto = "\n".join(lineas).strip()

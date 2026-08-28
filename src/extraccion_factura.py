@@ -59,10 +59,11 @@ def _parse_json_ollama(texto: str) -> dict[str, Any] | None:
         return None
 
 
-def extraer_campos_desde_texto(texto_plano: str) -> dict[str, str]:
+def extraer_campos_desde_texto(texto_plano: str) -> tuple[dict[str, str], str | None]:
     """
-    Devuelve claves: numero_factura, fecha_factura (YYYY-MM-DD), nombre_proveedor,
-    cif_proveedor, direccion_proveedor, base_imponible, iva, total (strings, pueden vacías).
+    Devuelve (campos, aviso). Campos: numero_factura, fecha_factura (YYYY-MM-DD),
+    nombre_proveedor, cif_proveedor, direccion_proveedor, base_imponible, iva, total.
+    aviso no vacío si hubo texto pero la extracción con Ollama falló.
     """
     vacio = {
         "numero_factura": "",
@@ -75,9 +76,9 @@ def extraer_campos_desde_texto(texto_plano: str) -> dict[str, str]:
         "total": "",
     }
     if not (texto_plano or "").strip():
-        return vacio
+        return vacio, None
     if not requests:
-        return vacio
+        return vacio, "Sin cliente HTTP; no se pudo llamar a Ollama."
     prompt = f"""Eres un extractor de datos de facturas españolas. Del texto siguiente extrae campos y responde ÚNICAMENTE con un JSON válido (sin markdown).
 
 Claves obligatorias (string, vacío si no consta):
@@ -96,28 +97,38 @@ Texto de la factura:
 \"\"\"
 """
     try:
+        model = config.OLLAMA_MODEL_FACTURA
         r = requests.post(
             f"{config.OLLAMA_URL.rstrip('/')}/api/generate",
             json={
-                "model": config.OLLAMA_MODEL,
+                "model": model,
                 "prompt": prompt,
                 "stream": False,
             },
             timeout=120,
         )
         if r.status_code != 200:
-            return vacio
+            det = ""
+            try:
+                det = r.json().get("error") or r.text[:200]
+            except Exception:
+                det = r.text[:200] if r.text else ""
+            aviso = f"Ollama no extrajo datos (HTTP {r.status_code}"
+            if det:
+                aviso += f": {det}"
+            aviso += f"). Modelo: {model}."
+            return vacio, aviso
         resp = r.json().get("response", "")
         data = _parse_json_ollama(resp)
         if not isinstance(data, dict):
-            return vacio
+            return vacio, "Ollama respondió pero el JSON de la factura no fue válido."
         out = vacio.copy()
         for k in out:
             v = data.get(k)
             out[k] = "" if v is None else str(v).strip()
-        return out
-    except Exception:
-        return vacio
+        return out, None
+    except Exception as exc:
+        return vacio, f"Error al extraer con Ollama: {exc}"
 
 
 def normalizar_fecha_iso(s: str) -> str | None:

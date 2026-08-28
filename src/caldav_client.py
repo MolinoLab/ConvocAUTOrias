@@ -196,10 +196,17 @@ def _principal_calendars_matching_config_url(client, url_cal: str) -> list:
     return []
 
 
-def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> list:
+def _resolve_agenda_calendars(
+    client,
+    telegram_username: str | None = None,
+    *,
+    incluir_todos_calendarios_personales: bool = False,
+) -> list:
     """
     Calendarios visibles para agenda: equipo (CALDAV_AGENDA_CALENDAR_NAMES o CALDAV_CALENDAR_NAMES)
     más, si aplica, el calendario personal mapeado para ese usuario de Telegram.
+    Si incluir_todos_calendarios_personales=True (recordatorios programados n8n), se añaden
+    todos los calendarios personales definidos en CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM.
     Si hay nombres de equipo configurados pero ninguno coincide, no hace fallback a
     CALDAV_CALENDAR_URL (suele ser un solo calendario personal).
     """
@@ -235,16 +242,28 @@ def _resolve_agenda_calendars(client, telegram_username: str | None = None) -> l
                 f"Ningun calendario de agenda coincide con: {', '.join(team_names)}"
             )
 
-    un = (telegram_username or "").strip().lstrip("@").lower()
-    if un and config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM:
-        personal_name = (config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM.get(un) or "").strip()
-        if personal_name:
-            extra = _calendarios_filtrados_por_nombres(all_cals, [personal_name])
-            for c in extra:
-                u = str(getattr(c, "url", "") or "").strip()
-                if u and u not in seen_urls:
-                    seen_urls.add(u)
-                    out.append(c)
+    personal_names: list[str] = []
+    if incluir_todos_calendarios_personales and config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM:
+        seen_personal: set[str] = set()
+        for personal_name in config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM.values():
+            pn = (personal_name or "").strip()
+            if pn and pn not in seen_personal:
+                seen_personal.add(pn)
+                personal_names.append(pn)
+    else:
+        un = (telegram_username or "").strip().lstrip("@").lower()
+        if un and config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM:
+            personal_name = (config.CALDAV_PERSONAL_CALENDAR_BY_TELEGRAM.get(un) or "").strip()
+            if personal_name:
+                personal_names = [personal_name]
+
+    for personal_name in personal_names:
+        extra = _calendarios_filtrados_por_nombres(all_cals, [personal_name])
+        for c in extra:
+            u = str(getattr(c, "url", "") or "").strip()
+            if u and u not in seen_urls:
+                seen_urls.add(u)
+                out.append(c)
 
     if out:
         return out
@@ -598,6 +617,7 @@ def listar_tareas(
     *,
     agenda_telegram_username: str | None = None,
     solo_calendarios_escritura: bool = False,
+    agenda_programada: bool = False,
 ) -> list[dict]:
     """
     Recupera tareas (VTODO) de calendarios de agenda (equipo + personal según usuario) o,
@@ -617,7 +637,11 @@ def listar_tareas(
         if solo_calendarios_escritura:
             calendars = _resolve_target_calendars(client)
         else:
-            calendars = _resolve_agenda_calendars(client, agenda_telegram_username)
+            calendars = _resolve_agenda_calendars(
+                client,
+                agenda_telegram_username,
+                incluir_todos_calendarios_personales=agenda_programada,
+            )
     except Exception:
         return []
 
@@ -714,6 +738,7 @@ def listar_eventos_en_ventana(
     *,
     agenda_telegram_username: str | None = None,
     solo_calendarios_escritura: bool = False,
+    agenda_programada: bool = False,
 ) -> list[dict]:
     """
     VEVENT con inicio en [win_start, win_end_excl). Misma forma de dict que listar_eventos_proximos_dias.
@@ -738,7 +763,11 @@ def listar_eventos_en_ventana(
         if solo_calendarios_escritura:
             calendars = _resolve_target_calendars(client)
         else:
-            calendars = _resolve_agenda_calendars(client, agenda_telegram_username)
+            calendars = _resolve_agenda_calendars(
+                client,
+                agenda_telegram_username,
+                incluir_todos_calendarios_personales=agenda_programada,
+            )
     except Exception as exc:
         _set_last_evento_error(f"Error conectando CalDAV: {str(exc)[:180]}")
         return []

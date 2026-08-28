@@ -61,6 +61,10 @@ def sync_nextcloud_datos() -> dict:
             config.CSV_FABRICA,
             "fabrica.csv",
         )
+    resultados["contabilidad_csv"] = _subir_csv_si_existe(
+        config.CSV_CONTABILIDAD,
+        "contabilidad.csv",
+    )
 
     notas_md = sincronizar_markdown_a_nextcloud_notes()
 

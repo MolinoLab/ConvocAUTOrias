@@ -13,7 +13,7 @@ DIR_PROYECTO = Path(__file__).resolve().parent
 load_dotenv(DIR_PROYECTO / ".env")
 
 # Versión del bot (armonIA en /ayuda y arranque). Subir el número en cada cambio que despliegues.
-APP_VERSION = os.getenv("APP_VERSION", "0.28").strip() or "0.28"
+APP_VERSION = os.getenv("APP_VERSION", "0.29").strip() or "0.29"
 # Zona horaria para fechas relativas y formato en /ver* (defecto España peninsular)
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Europe/Madrid").strip() or "Europe/Madrid"
 
@@ -73,6 +73,8 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "phi3:mini")
 _ollama_inv = os.getenv("OLLAMA_MODEL_INVESTIGACION", "").strip()
 OLLAMA_MODEL_INVESTIGACION = _ollama_inv if _ollama_inv else OLLAMA_MODEL
+_ollama_fct = os.getenv("OLLAMA_MODEL_FACTURA", "").strip()
+OLLAMA_MODEL_FACTURA = _ollama_fct if _ollama_fct else OLLAMA_MODEL
 
 # Nextcloud WebDAV
 NEXTCLOUD_URL = os.getenv("NEXTCLOUD_URL", "").rstrip("/")
@@ -207,6 +209,7 @@ CARPETA_MEMORIAS = DATA_DIR / "memorias"
 CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
 CSV_FABRICA = DATA_DIR / "fabrica.csv"
 CSV_RECOMENDACIONES = DATA_DIR / "recomendaciones.csv"
+CSV_RECORDATORIOS = DATA_DIR / "recordatorios.csv"
 
 # Descargas de media (yt-dlp) en el servidor
 _descargas_dir_env = os.getenv("DESCARGAS_DIR", "").strip()

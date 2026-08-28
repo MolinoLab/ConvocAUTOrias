@@ -14,6 +14,7 @@ from dataclasses import replace
 import shutil
 import sys
 import tempfile
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -140,6 +141,13 @@ from src.db_pendientes import (
     eliminar as eliminar_pendiente_db,
     listar_recientes_primero as listar_pendientes_recientes,
 )
+from src.db_recordatorios import (
+    añadir as añadir_recordatorio,
+    buscar_por_id as buscar_recordatorio_por_id,
+    eliminar as eliminar_recordatorio,
+    listar_activos_por_chat,
+)
+from src.recordatorio_parse import parsear_texto_recordar
 from src.db_proyectos import (
     ESTADOS_PROYECTO_VALIDOS,
     Proyecto,
@@ -653,6 +661,7 @@ _ACCIONES_AUDIO = frozenset(
         "investiga",
         "huevos",
         "diario",
+        "recordar",
     }
 )
 _ACCION_AUDIO_SINONIMOS: dict[str, str] = {
@@ -702,6 +711,8 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[CalDAV] /evento /listeventos /informame /info [dias] /verevento /modevento /rmevento\n"
         "[Huevos] /huevos [para el fecha] /listhuevos — /modhuevo solo corrige registros existentes\n"
         "[Diario] /diario /listdiario /verdiario /moddiario /rmdiario\n"
+        "[Recordatorios] /recordar <fecha> <texto> /listrecordar /rmrecordar <id>\n"
+        "  Fechas: siempre, hoy, mañana, martes, 25-03-2026, etc.\n"
         "[Recomendaciones] /rec /listrecomendaciones /verrec /modrec /rmrec\n"
         "[Notas NC] /notas /listnotas /vernota /modnota /rmnota (cred. en .env)\n"
         "[Facturas] /factura /cancelarfactura /listcontabilidad /verfactura /rmfactura /modfactura\n"
@@ -710,7 +721,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[IoT] /enchufeestado /enchufeen /enchufeapagar /impresoraestado /impresoraapagar\n"
         "[Cursor] /agente <prompt> — agente local (MCP proyecto); /agentenuevo /agentefin /agentestatus\n"
         "[Audio] palabra inicial: idea, memoria, funcionalidad, tarea, comprar, voluntarios, "
-        "fabrica, fab, evento, investiga, huevos, diario; si no, pendiente. "
+        "fabrica, fab, evento, investiga, huevos, diario, recordar; si no, pendiente. "
         "Fechas: «para el …» / «para …». "
         "/ayuda — esta lista"
     )
@@ -5353,6 +5364,98 @@ async def cmd_rmdiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(msg)
 
 
+def _formatear_fecha_recordar(fecha: str) -> str:
+    f = (fecha or "").strip()
+    if f == "siempre":
+        return "cada dia (siempre)"
+    return formatear_dia_mes_sin_anio(f) if f else f
+
+
+async def cmd_recordar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /recordar <fecha> <texto>\n"
+            "Ej: /recordar mañana pasear al perro\n"
+            "Ej: /recordar martes reunion equipo\n"
+            "Ej: /recordar siempre tomar vitaminas\n"
+            "Fechas: siempre, hoy, mañana, pasado mañana, lunes…domingo, DD-MM-AAAA."
+        )
+        return
+    texto = " ".join(context.args).strip()
+    fecha, nombre = parsear_texto_recordar(texto)
+    if not fecha or not nombre.strip():
+        await update.message.reply_text(
+            "No pude entender la fecha o el texto.\n"
+            "Uso: /recordar <fecha> <texto>\n"
+            "Ej: /recordar mañana pasear al perro"
+        )
+        return
+    chat = update.effective_chat
+    usr = update.effective_user
+    if not chat:
+        await update.message.reply_text("No se pudo identificar el chat.")
+        return
+    try:
+        r = añadir_recordatorio(
+            nombre.strip(),
+            fecha=fecha,
+            chat_id=str(chat.id),
+            username=(usr.username or str(usr.id)) if usr else "",
+        )
+    except ValueError as e:
+        await update.message.reply_text(str(e))
+        return
+    await update.message.reply_text(
+        f"Recordatorio guardado.\n"
+        f"Cuando: {_formatear_fecha_recordar(r.fecha)}\n"
+        f"Texto: {r.texto}\n"
+        f"ID: {r.id}"
+    )
+
+
+async def cmd_listrecordar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    chat = update.effective_chat
+    cid = str(chat.id) if chat else ""
+    items = listar_activos_por_chat(cid)
+    if not items:
+        await update.message.reply_text("No tienes recordatorios activos.")
+        return
+    lineas = [f"Recordatorios activos ({len(items)}):"]
+    for r in sorted(items, key=lambda x: (x.fecha != "siempre", x.fecha, x.texto)):
+        lineas.append(
+            f"• [{_formatear_fecha_recordar(r.fecha)}] {r.texto} (id {r.id})"
+        )
+    await _reply_texto_largo(update, "\n".join(lineas))
+
+
+async def cmd_rmrecordar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /rmrecordar <id>\nEl id aparece en /listrecordar.")
+        return
+    rid = context.args[0].strip()
+    r = buscar_recordatorio_por_id(rid)
+    if not r:
+        await update.message.reply_text("Recordatorio no encontrado.")
+        return
+    chat = update.effective_chat
+    if chat and r.chat_id != str(chat.id):
+        await update.message.reply_text("Ese recordatorio no es de este chat.")
+        return
+    if eliminar_recordatorio(rid):
+        await update.message.reply_text(f"Recordatorio eliminado: {r.texto}")
+    else:
+        await update.message.reply_text("No se pudo eliminar.")
+
+
 async def cmd_rec(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _esta_autorizado(update):
         await _rechazar_no_autorizado(update)
@@ -6495,15 +6598,26 @@ async def manejar_archivo_factura(
         nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
     elif msg.document:
         mime = (msg.document.mime_type or "").lower()
-        if "pdf" not in mime:
-            await msg.reply_text("Solo se acepta PDF o imagen (foto).")
+        if "pdf" in mime:
+            archivo = await context.bot.get_file(msg.document.file_id)
+            sufijo = ".pdf"
+            raw_name = (msg.document.file_name or "").strip()
+            nombre_sugerido = raw_name if raw_name.lower().endswith(".pdf") else None
+            if not nombre_sugerido:
+                nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        elif mime.startswith("image/"):
+            archivo = await context.bot.get_file(msg.document.file_id)
+            sufijo = ".jpg"
+            raw_name = (msg.document.file_name or "").strip()
+            if raw_name.lower().endswith((".jpg", ".jpeg", ".png", ".webp")):
+                nombre_sugerido = raw_name
+            else:
+                ext = ".png" if "png" in mime else ".jpg"
+                sufijo = ext
+                nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+        else:
+            await msg.reply_text("Solo se acepta PDF o imagen (foto o documento de imagen).")
             return
-        archivo = await context.bot.get_file(msg.document.file_id)
-        sufijo = ".pdf"
-        raw_name = (msg.document.file_name or "").strip()
-        nombre_sugerido = raw_name if raw_name.lower().endswith(".pdf") else None
-        if not nombre_sugerido:
-            nombre_sugerido = f"factura_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
     else:
         return
 
@@ -6522,7 +6636,7 @@ async def manejar_archivo_factura(
         else:
             texto_plano = texto_desde_imagen(data)
 
-        campos = extraer_campos_desde_texto(texto_plano)
+        campos, aviso_extraccion = extraer_campos_desde_texto(texto_plano)
         fecha_norm = normalizar_fecha_iso(campos.get("fecha_factura") or "")
         if fecha_norm:
             d_parts = fecha_norm.split("-")
@@ -6531,7 +6645,10 @@ async def manejar_archivo_factura(
         else:
             d = fecha_hoy_relativas()
         tq = trimestre_desde_fecha(d.year, d.month)
-        nombre_nc = nombre_archivo_seguro(nombre_sugerido or f"factura{sufijo}")
+        base_nc = nombre_archivo_seguro(nombre_sugerido or f"factura{sufijo}")
+        stem = Path(base_nc).stem or "factura"
+        ext = Path(base_nc).suffix or sufijo
+        nombre_nc = f"{stem}_{uuid.uuid4().hex[:8]}{ext}"
         rel_nc = f"{d.year}/Gastos/{tq}/{nombre_nc}"
         ok_up = subir_archivo_facturas(rel_nc, data)
         ruta_completa = (
@@ -6560,6 +6677,15 @@ async def manejar_archivo_factura(
         else:
             lineas.append(
                 "Aviso: no se pudo subir a Nextcloud (revisa URL/usuario/clave y ruta)."
+            )
+        if aviso_extraccion:
+            lineas.append("")
+            lineas.append(f"Aviso extraccion: {aviso_extraccion}")
+        elif not (texto_plano or "").strip():
+            lineas.append("")
+            lineas.append(
+                "Aviso: no se obtuvo texto del archivo (PDF escaneado o OCR vacio). "
+                "Sube foto nítida o PDF con texto seleccionable; corrige campos con /modfactura."
             )
         lineas.append("")
         lineas.append("Datos extraidos (revisa con /modfactura si hace falta):")
@@ -7098,6 +7224,42 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Archivo: {ent.ruta}"
             )
 
+        elif accion == "recordar":
+            if not contenido.strip():
+                await estado.edit_text(
+                    "Di recordar seguido de fecha y texto. "
+                    "Ej: recordar mañana pasear al perro"
+                )
+                return
+            fecha_r, nombre_r = parsear_texto_recordar(contenido.strip())
+            if not fecha_r or not nombre_r.strip():
+                await estado.edit_text(
+                    "No pude entender la fecha o el texto.\n"
+                    "Ej: recordar mañana pasear al perro"
+                )
+                return
+            chat = update.effective_chat
+            usr = update.effective_user
+            if not chat:
+                await estado.edit_text("No se pudo identificar el chat.")
+                return
+            try:
+                r = añadir_recordatorio(
+                    nombre_r.strip(),
+                    fecha=fecha_r,
+                    chat_id=str(chat.id),
+                    username=(usr.username or str(usr.id)) if usr else "",
+                )
+            except ValueError as e:
+                await estado.edit_text(str(e))
+                return
+            await estado.edit_text(
+                f"Recordatorio guardado.\n"
+                f"Cuando: {_formatear_fecha_recordar(r.fecha)}\n"
+                f"Texto: {r.texto}\n"
+                f"ID: {r.id}"
+            )
+
         else:
             usr = update.effective_user
             if not usr:
@@ -7113,7 +7275,7 @@ async def manejar_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 f"Guardado en pendientes (sin accion reconocida en el audio).\n"
                 f"ID: {pend.id}\n"
                 f"Usa /listpendientes y /mvpendiente <n|id> <tipo> [args extra]\n"
-                f"Tipos: idea, memoria, tarea, evento, funcionalidad, func, investiga, comprar, fabrica, fab, diario"
+                f"Tipos: idea, memoria, tarea, evento, funcionalidad, func, investiga, comprar, fabrica, fab, diario, recordar"
             )
 
     except Exception as exc:
@@ -7252,6 +7414,9 @@ def main() -> None:
     app.add_handler(CommandHandler("huevos", cmd_huevos))
     app.add_handler(CommandHandler("listhuevos", cmd_listhuevos))
     app.add_handler(CommandHandler("diario", cmd_diario))
+    app.add_handler(CommandHandler("recordar", cmd_recordar))
+    app.add_handler(CommandHandler("listrecordar", cmd_listrecordar))
+    app.add_handler(CommandHandler("rmrecordar", cmd_rmrecordar))
     app.add_handler(CommandHandler("listpendientes", cmd_listpendientes))
     app.add_handler(CommandHandler("verpendiente", cmd_verpendiente))
     app.add_handler(CommandHandler("rmpendientes", cmd_rmpendientes))
@@ -7343,6 +7508,8 @@ def main() -> None:
         ("modrec", cmd_modrec),
         ("lsdiario", cmd_listdiario),
         ("vdiario", cmd_verdiario),
+        ("lsrecordar", cmd_listrecordar),
+        ("rmrecordar", cmd_rmrecordar),
         ("lshuevos", cmd_listhuevos),
         ("lshv", cmd_listhuevos),
         ("lshue", cmd_listregistroshuevos),
@@ -7369,8 +7536,13 @@ def main() -> None:
         app.add_handler(CommandHandler(_alias, _cmd))
     app.add_handler(
         MessageHandler(
-            filters.PHOTO | filters.Document.MimeType("application/pdf"),
+            filters.PHOTO
+            | filters.Document.MimeType("application/pdf")
+            | filters.Document.MimeType("image/jpeg")
+            | filters.Document.MimeType("image/png")
+            | filters.Document.MimeType("image/webp"),
             manejar_archivo_factura,
+            block=False,
         )
     )
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, manejar_audio))

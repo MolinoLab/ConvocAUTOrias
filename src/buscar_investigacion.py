@@ -1,6 +1,6 @@
 """
 Resultados de búsqueda web para investigaciones (sin Ollama).
-Prioridad: SEARXNG_URL si está definido; si no, duckduckgo_search (paquete opcional).
+Prioridad: SEARXNG_URL si está definido; si no, paquete ddgs (antes duckduckgo-search).
 """
 from __future__ import annotations
 
@@ -16,10 +16,21 @@ try:
 except ImportError:
     requests = None
 
+DDGS: Any = None
+
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS as _DDGS_CLS
+
+    DDGS = _DDGS_CLS
 except ImportError:
-    DDGS = None  # type: ignore[misc, assignment]
+    try:
+        from duckduckgo_search import DDGS as _DDGS_CLS
+
+        DDGS = _DDGS_CLS
+    except ImportError:
+        pass
+
+BUSCADOR_DDG_DISPONIBLE = DDGS is not None
 
 
 def _normalizar(url: str) -> str:
@@ -76,24 +87,36 @@ def _buscar_searxng(q: str) -> list[dict[str, str]]:
     return out
 
 
+def _iter_ddg_results(ddgs: Any, q: str) -> Any:
+    gen = ddgs.text(q, max_results=config.INVESTIGACION_SEARCH_MAX)
+    if gen is None:
+        return
+    if hasattr(gen, "__iter__") and not isinstance(gen, (str, bytes, dict)):
+        yield from gen
+        return
+    yield gen
+
+
 def _buscar_ddg(q: str) -> list[dict[str, str]]:
     out: list[dict[str, str]] = []
     try:
-        with DDGS() as ddgs:  # type: ignore[operator]
-            gen: Any = ddgs.text(q, max_results=config.INVESTIGACION_SEARCH_MAX)
-            for item in gen:
+        with DDGS() as ddgs:
+            for item in _iter_ddg_results(ddgs, q):
                 if not isinstance(item, dict):
                     continue
                 href = _normalizar(str(item.get("href") or item.get("url") or ""))
                 if not href.startswith("http"):
                     continue
+                snippet = item.get("body") or item.get("snippet") or item.get("content") or ""
                 out.append(
                     {
                         "title": str(item.get("title") or "")[:300],
                         "url": href,
-                        "snippet": str(item.get("body") or "")[:800],
+                        "snippet": str(snippet)[:800],
                     }
                 )
+                if len(out) >= config.INVESTIGACION_SEARCH_MAX:
+                    break
     except Exception:
         return []
     return out

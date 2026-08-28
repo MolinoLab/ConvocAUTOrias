@@ -200,7 +200,7 @@ CAMPOS_EDITABLES_MOD: list[tuple[str, str]] = [
     ("base_imponible", "Base imponible"),
     ("iva", "IVA"),
     ("total", "Total"),
-    ("ruta_nextcloud", "Ruta Nextcloud (relativa)"),
+    ("ruta_nextcloud", "Ruta Nextcloud (bajo files del usuario WebDAV)"),
 ]
 
 

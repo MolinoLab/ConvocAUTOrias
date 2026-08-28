@@ -1,25 +1,25 @@
 """
 Domingo por la noche (previsto vía n8n): resumen de la semana entrante (lunes a domingo)
-en APP_TIMEZONE — eventos CalDAV (calendarios de agenda), Deck y VTODO.
+en APP_TIMEZONE — eventos CalDAV (calendarios de agenda + personales), Deck y VTODO.
 Si no hay nada en la ventana, no envía mensaje por Telegram.
 """
 from __future__ import annotations
 
 import sys
-from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from src.caldav_client import listar_eventos_en_ventana, listar_tareas
-from src.deck_client import listar_tareas_deck
-from src.fecha_display import (
-    ahora_local,
-    formatear_dia_mes_sin_anio,
-    lunes_semana_entrante,
-    ventana_dia_local,
+from src.agenda_notificaciones import (
+    filtrar_deck_por_rango,
+    filtrar_vtodos_por_rango,
+    listar_eventos_agenda_programada,
+    listar_vtodos_agenda_programada,
+    ventana_semana_entrante,
 )
+from src.deck_client import listar_tareas_deck
+from src.fecha_display import ahora_local, formatear_dia_mes_sin_anio
 from src.notifier import enviar_mensaje_a_chats
 
 CHUNK = 4000
@@ -34,27 +34,15 @@ def _enviar_largo(texto: str) -> bool:
 def main() -> int:
     hoy = ahora_local().date()
     generado = ahora_local().strftime("%d-%m-%Y %H:%M")
-    lunes = lunes_semana_entrante(hoy)
-    domingo = lunes + timedelta(days=6)
+    lunes, domingo, win_start, win_end_excl = ventana_semana_entrante(hoy)
     iso_lun = lunes.isoformat()
     iso_dom = domingo.isoformat()
 
-    win_start, _ = ventana_dia_local(lunes)
-    win_end_excl = win_start + timedelta(days=7)
-
-    eventos = listar_eventos_en_ventana(win_start, win_end_excl, agenda_telegram_username=None)
+    eventos = listar_eventos_agenda_programada(win_start, win_end_excl)
     deck_all = listar_tareas_deck()
-    deck = [
-        t
-        for t in deck_all
-        if (t.get("due") or "") and iso_lun <= t["due"] <= iso_dom
-    ]
-    vtodos_all = listar_tareas(include_completed=False, agenda_telegram_username=None)
-    vtodos = [
-        t
-        for t in vtodos_all
-        if (t.get("due") or "") and iso_lun <= t["due"] <= iso_dom
-    ]
+    deck = filtrar_deck_por_rango(deck_all, iso_lun, iso_dom)
+    vtodos_all = listar_vtodos_agenda_programada(include_completed=False)
+    vtodos = filtrar_vtodos_por_rango(vtodos_all, iso_lun, iso_dom)
 
     if not eventos and not deck and not vtodos:
         print(

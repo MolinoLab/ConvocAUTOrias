@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import config
-from src.buscar_investigacion import DDGS, buscar_fuentes, fuentes_a_texto
+from src.buscar_investigacion import BUSCADOR_DDG_DISPONIBLE, buscar_fuentes, fuentes_a_texto
 from src.db_investigaciones import Investigacion, actualizar, listar
 from src.notifier import enviar_mensaje
 from src.scraper import extraer
@@ -67,6 +67,7 @@ Ejemplo: {{"resumen": "...", "link": "https://...", "cuerpo_markdown": "## ...\\
                 "model": _modelo_investigacion(),
                 "prompt": prompt,
                 "stream": False,
+                "format": "json",
             },
             timeout=config.TIMEOUT_OLLAMA_INVESTIGACION,
         )
@@ -122,15 +123,15 @@ def _procesar_reintento_telegram(inv: Investigacion) -> None:
 
 
 def _procesar_completo(inv: Investigacion) -> None:
-    if not config.SEARXNG_URL and DDGS is None:
+    if not config.SEARXNG_URL and not BUSCADOR_DDG_DISPONIBLE:
         print(
-            "Aviso: define SEARXNG_URL en .env o instala duckduckgo-search "
-            "(pip install duckduckgo-search) para obtener resultados.",
+            "Aviso: define SEARXNG_URL en .env o instala ddgs "
+            "(pip install ddgs) para obtener resultados.",
             flush=True,
         )
         _marcar_error(
             inv,
-            "Sin buscador: define SEARXNG_URL o instala duckduckgo-search en el entorno.",
+            "Sin buscador: define SEARXNG_URL o instala ddgs en el entorno.",
         )
         return
 
@@ -139,7 +140,12 @@ def _procesar_completo(inv: Investigacion) -> None:
 
     if not fuentes:
         print(f"Sin fuentes para id={inv.id} concepto={inv.concepto!r}", flush=True)
-        _marcar_error(inv, "Sin resultados de busqueda web para este concepto.")
+        hint = (
+            "Revisa SEARXNG_URL o el paquete ddgs en el contenedor API."
+            if not config.SEARXNG_URL
+            else "Revisa que SearXNG responda en SEARXNG_URL."
+        )
+        _marcar_error(inv, f"Sin resultados de busqueda web para este concepto. {hint}")
         return
 
     urls = [f["url"] for f in fuentes if f.get("url")]

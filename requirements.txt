@@ -10,7 +10,7 @@ beautifulsoup4>=4.12.0
 trafilatura>=1.6.0
 
 # Búsqueda web (investigaciones); alternativa: SEARXNG_URL en .env
-duckduckgo-search>=6.0.0
+ddgs>=9.0.0
 
 # CalDAV y Nextcloud
 caldav>=1.3.0
