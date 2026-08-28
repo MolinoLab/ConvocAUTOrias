@@ -210,6 +210,22 @@ CARPETA_MEMORIAS.mkdir(parents=True, exist_ok=True)
 CSV_FABRICA = DATA_DIR / "fabrica.csv"
 CSV_RECOMENDACIONES = DATA_DIR / "recomendaciones.csv"
 CSV_RECORDATORIOS = DATA_DIR / "recordatorios.csv"
+CSV_PRESUPUESTOS = DATA_DIR / "presupuestos.csv"
+CSV_PRESUPUESTOS_IDEAS = DATA_DIR / "presupuestos_ideas.csv"
+CARPETA_PRESUPUESTOS = DATA_DIR / "presupuestos"
+CARPETA_PRESUPUESTOS.mkdir(parents=True, exist_ok=True)
+
+PRESU_ORIGEN_DESPLAZAMIENTO = os.getenv(
+    "PRESU_ORIGEN_DESPLAZAMIENTO", "MolinoLab, Valladolid, España"
+).strip() or "MolinoLab, Valladolid, España"
+try:
+    PRESU_PRECIO_DIA_DEFAULT = float(os.getenv("PRESU_PRECIO_DIA_DEFAULT", "280"))
+except ValueError:
+    PRESU_PRECIO_DIA_DEFAULT = 280.0
+try:
+    PRESU_COSTE_KM = float(os.getenv("PRESU_COSTE_KM", "0.30"))
+except ValueError:
+    PRESU_COSTE_KM = 0.30
 
 # Descargas de media (yt-dlp) en el servidor
 _descargas_dir_env = os.getenv("DESCARGAS_DIR", "").strip()

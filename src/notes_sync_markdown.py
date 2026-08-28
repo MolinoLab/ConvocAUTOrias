@@ -1,6 +1,6 @@
 """
-Sincroniza ficheros .md/.txt de ideas, proyectos, investigaciones y memorias
-hacia Nextcloud Notes (API), con mapeo estable por fichero local.
+Sincroniza ficheros .md/.txt de ideas, proyectos, investigaciones, memorias
+y presupuestos hacia Nextcloud Notes (API), con mapeo estable por fichero local.
 """
 from __future__ import annotations
 
@@ -48,6 +48,7 @@ _PREFIX: dict[str, str] = {
     "proyectos": "[Proyectos]",
     "investigaciones": "[Investigaciones]",
     "memorias": "[Memorias]",
+    "presupuestos": "[Presupuestos]",
 }
 
 _CARPETAS: list[tuple[str, Path]] = [
@@ -55,6 +56,7 @@ _CARPETAS: list[tuple[str, Path]] = [
     ("proyectos", config.CARPETA_PROYECTOS),
     ("investigaciones", config.CARPETA_INVESTIGACIONES),
     ("memorias", config.CARPETA_MEMORIAS),
+    ("presupuestos", config.CARPETA_PRESUPUESTOS),
 ]
 
 

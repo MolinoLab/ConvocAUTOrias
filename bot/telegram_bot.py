@@ -1,6 +1,6 @@
 """
 Bot Telegram: convocatorias (/convo, /listconvo, /verconvo, /rmconvo),
-ideas, memorias, proyectos, tiempos, enlaces, investigaciones (/investiga), funcionalidades,
+ideas, memorias, proyectos, presupuestos (/presu), tiempos, enlaces, investigaciones (/investiga), funcionalidades,
 tareas Deck, fabricación (Fabricar), eventos CalDAV, huevos, diario, pendientes (audio),
 agente Cursor (/agente), audio. Ver /ayuda.
 URL suelta = nuevo enlace (data/enlaces.csv). Convocatoria solo con /convo <url>.
@@ -158,6 +158,34 @@ from src.db_proyectos import (
     leer_proyectos,
     tiempo_total_minutos,
 )
+from src.db_presupuestos import (
+    MODOS_DESPLAZAMIENTO_VALIDOS,
+    Presupuesto,
+    actualizar_presupuesto,
+    buscar_por_id as buscar_presupuesto_por_id,
+    eliminar_por_id as eliminar_presupuesto_por_id,
+    leer_presupuestos,
+)
+from src.db_presupuestos_ideas import (
+    desvincular_todas as desvincular_ideas_presupuesto,
+    listar_ideas_de_presupuesto,
+    reemplazar_ideas as reemplazar_ideas_presupuesto,
+)
+from src.presupuesto_calculo import (
+    MODO_ALOJAMIENTO,
+    MODO_NINGUNO,
+    calcular_costes,
+    etiqueta_modo,
+    formatear_euros,
+    formatear_numero,
+    intentar_sync_notes,
+    km_desde_origen,
+    parsear_entero,
+    parsear_float,
+    persistir_presupuesto_nuevo,
+    regenerar_tras_edicion,
+    resolver_modo,
+)
 from src.db_tiempos import (
     Tiempo,
     actualizar_tiempo,
@@ -241,11 +269,13 @@ CACHE_RM_HUEVO_IDS = "rm_huevo_ids"
 CACHE_RM_DIARIO_IDS = "rm_diario_ids"
 CACHE_RM_NOTAS_IDS = "rm_notas_ids"
 CACHE_RM_REC_IDS = "rm_rec_ids"
+CACHE_RM_PRESUPUESTOS = "rm_presupuesto_ids"
 WIZARD_MOD_TAREA_KEY = "mod_tarea_wizard"
 WIZARD_MOD_EVENTO_KEY = "mod_evento_wizard"
 WIZARD_MOD_TIEMPO_KEY = "mod_tiempo_wizard"
 WIZARD_MOD_NOTA_KEY = "mod_nota_wizard"
 WIZARD_PROYECTO_KEY = "proyecto_wizard"
+WIZARD_PRESU_KEY = "presu_wizard"
 WIZARD_MOD_FACTURA_KEY = "mod_factura_wizard"
 WIZARD_MOD_FABRICA_KEY = "mod_fabrica_wizard"
 WIZARD_MOD_PROYECTO_KEY = "mod_proyecto_wizard"
@@ -373,6 +403,23 @@ MOD_LISTA_CAMPOS: dict[str, tuple[str, list[tuple[str, str]], str]] = {
         ],
         "/listregistroshuevos",
     ),
+    "presu": (
+        CACHE_RM_PRESUPUESTOS,
+        [
+            ("titulo", "Titulo"),
+            ("descripcion", "Descripcion (- vaciar)"),
+            ("lugar", "Lugar"),
+            ("necesidades_tecnicas", "Necesidades tecnicas"),
+            ("jornadas", "Jornadas de grabacion"),
+            ("precio_dia", "Precio/dia (EUR)"),
+            ("modo_desplazamiento", "Modo: ninguno | diario | unico | alojamiento"),
+            ("km_ida", "Km de ida"),
+            ("noches_alojamiento", "Noches de alojamiento"),
+            ("coste_alojamiento", "Coste alojamiento (EUR)"),
+            ("ideas_vinculadas", "Ideas (numeros de /listideas, coma; - ninguna)"),
+        ],
+        "/listpresu",
+    ),
 }
 
 FAB_RESUMEN_LISTA_MAX = 72
@@ -403,6 +450,7 @@ MEMORIA_RESUMEN_LISTA_MAX = 70
 ENLACE_RESUMEN_LISTA_MAX = 72
 MAX_TELEGRAM_MSG = 4000
 PROYECTO_RESUMEN_LISTA_MAX = 60
+PRESU_RESUMEN_LISTA_MAX = 60
 TIEMPO_RESUMEN_LISTA_MAX = 55
 
 _EMAIL_PROYECTO_RE = re.compile(
@@ -702,6 +750,7 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "[Ideas] /idea /listideas /veridea /modidea /rmidea\n"
         "[Memorias] /memoria /listmemorias /vermemoria /modmemoria /rmmemoria\n"
         "[Proyectos] /proyecto /cancelarproyecto /listproyectos /verproyecto /modproyecto /rmproyecto\n"
+        "[Presupuestos] /presu /cancelarpresu /listpresu /verpresu /modpresu /rmpresu\n"
         "[Tiempos] /tiempo /tiempofin /listtiempo /vertiempo /modtiempo\n"
         "[Funcionalidades] /func /listfunc /verfunc /modfunc /rmfunc\n"
         "[Investigaciones] /investiga /listinvestigaciones /verinvestigacion /modinv /rminvestigacion\n"
@@ -1947,6 +1996,547 @@ async def cmd_rmproyecto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if context.chat_data is not None:
         context.chat_data.pop(CACHE_RM_PROYECTOS, None)
     partes = [f"Proyectos eliminados: {ok_n}."]
+    if fuera:
+        partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
+    if no_md:
+        partes.append(f"Aviso: {no_md} archivo(s) .md no se pudieron borrar.")
+    await update.message.reply_text(" ".join(partes))
+
+
+# --- Presupuestos (/presu) ---
+
+
+def _es_si_wizard(texto: str) -> bool:
+    return (texto or "").strip().casefold() in ("s", "si", "sí", "y", "yes", "ok")
+
+
+def _es_no_wizard(texto: str) -> bool:
+    return (texto or "").strip().casefold() in ("n", "no")
+
+
+def _limpiar_wizard_presu(context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.chat_data is not None:
+        context.chat_data.pop(WIZARD_PRESU_KEY, None)
+
+
+def _ruta_archivo_presupuesto(ruta: str) -> Path:
+    p = Path((ruta or "").strip())
+    if p.is_absolute():
+        return p
+    return (config.DIR_PROYECTO / p).resolve()
+
+
+def _presupuesto_desde_indice_listado(
+    context: ContextTypes.DEFAULT_TYPE, indice: int
+) -> Presupuesto | None:
+    cache = (context.chat_data or {}).get(CACHE_RM_PRESUPUESTOS) or []
+    if indice < 1 or indice > len(cache):
+        return None
+    return buscar_presupuesto_por_id(cache[indice - 1])
+
+
+def _resolver_presupuesto_arg(
+    context: ContextTypes.DEFAULT_TYPE, arg: str
+) -> Presupuesto | None:
+    if arg.isdigit():
+        p = _presupuesto_desde_indice_listado(context, int(arg))
+        if p:
+            return p
+    return buscar_presupuesto_por_id(arg)
+
+
+def _parsear_ids_ideas_presu(
+    context: ContextTypes.DEFAULT_TYPE, texto: str
+) -> tuple[list[str], str | None]:
+    raw = (texto or "").strip()
+    if raw in ("-", "—", ""):
+        return [], None
+    cache = (context.chat_data or {}).get(CACHE_RM_IDEAS) or []
+    tokens = [t.strip() for t in raw.replace(";", ",").split(",") if t.strip()]
+    if len(tokens) == 1 and " " in tokens[0]:
+        tokens = [t for t in tokens[0].split() if t]
+    ids: list[str] = []
+    vistos: set[str] = set()
+    for t in tokens:
+        if t.isdigit():
+            n = int(t)
+            if n < 1 or n > len(cache):
+                return [], (
+                    f"Indice de idea fuera de rango: {n}. "
+                    "Usa /listideas en este chat antes."
+                )
+            iid = str(cache[n - 1])
+        else:
+            if not buscar_idea_por_id(t):
+                return [], f"Idea no encontrada: {t}"
+            iid = t
+        if iid not in vistos:
+            vistos.add(iid)
+            ids.append(iid)
+    return ids, None
+
+
+def _formatear_presupuesto_lista(p: Presupuesto) -> str:
+    tit = p.titulo.strip() or "(sin titulo)"
+    if len(tit) > PRESU_RESUMEN_LISTA_MAX:
+        tit = tit[:PRESU_RESUMEN_LISTA_MAX] + "..."
+    total = p.total_aproximado.strip() or "0"
+    return f"{tit} — {total} EUR"
+
+
+def _texto_resumen_wizard_presu(data: dict) -> str:
+    jor = parsear_float(str(data.get("jornadas") or 0), 0.0)
+    p_dia = parsear_float(
+        str(data.get("precio_dia") or config.PRESU_PRECIO_DIA_DEFAULT),
+        config.PRESU_PRECIO_DIA_DEFAULT,
+    )
+    modo = data.get("modo_desplazamiento") or MODO_NINGUNO
+    km = parsear_float(str(data.get("km_ida") or 0), 0.0)
+    noches = parsear_float(str(data.get("noches_alojamiento") or 0), 0.0)
+    p_noche = parsear_float(str(data.get("precio_noche") or 0), 0.0)
+    calc = calcular_costes(
+        jornadas=jor,
+        precio_dia=p_dia,
+        modo=modo,
+        km_ida=km,
+        noches=noches,
+        precio_noche=p_noche,
+    )
+    n_ideas = len(data.get("ids_ideas") or [])
+    return (
+        f"Proyecto: {data.get('titulo') or '(sin titulo)'}\n"
+        f"Lugar: {data.get('lugar') or '(no indicado)'}\n"
+        f"Jornadas: {formatear_numero(jor)} x {formatear_euros(p_dia)}/dia "
+        f"= {formatear_euros(calc.coste_jornadas)}\n"
+        f"Desplazamiento: {etiqueta_modo(modo)}; "
+        f"ida {formatear_numero(km)} km → {formatear_euros(calc.coste_desplazamiento)}\n"
+        f"Alojamiento: {formatear_numero(noches)} noches → "
+        f"{formatear_euros(calc.coste_alojamiento)}\n"
+        f"Ideas vinculadas: {n_ideas}\n"
+        f"Total aproximado: {formatear_euros(calc.total)}"
+    )
+
+
+def _prompt_paso_presu(step: str) -> str:
+    dft = formatear_numero(config.PRESU_PRECIO_DIA_DEFAULT)
+    if step == "titulo":
+        return (
+            "Nuevo presupuesto — nombre del proyecto "
+            "(o - para '(sin titulo)')."
+        )
+    if step == "descripcion":
+        return "Descripcion del proyecto (o - para omitir)."
+    if step == "lugar":
+        return "Lugar de grabacion (o - si no hay desplazamiento / no aplica)."
+    if step == "necesidades":
+        return "Necesidades tecnicas (o - para omitir)."
+    if step == "jornadas":
+        return "Jornadas de grabacion (numero entero, o - para 0)."
+    if step == "precio_dia":
+        return f"Precio por dia en EUR (o - para {dft} EUR)."
+    if step == "desplazamiento":
+        return "¿Hay desplazamiento? s / n (o - = no)."
+    if step == "km_manual":
+        return "Km de ida (numero). - = 0."
+    if step == "modo":
+        return (
+            "Modo de desplazamiento: diario | unico | alojamiento\n"
+            "(diario = ida/vuelta cada jornada; unico = un viaje ida/vuelta; "
+            "alojamiento = viaje unico + noches).\n"
+            "- = introducir km a mano (o sin desplazamiento si ya los pusiste)."
+        )
+    if step == "noches":
+        return "Noches de alojamiento (entero, o - para 0)."
+    if step == "precio_noche":
+        return "Precio por noche en EUR (o - para 0)."
+    if step == "ideas":
+        return (
+            "Ideas vinculadas: numeros de /listideas separados por coma "
+            "(o - ninguna). Si no has listado, usa /listideas y vuelve a /presu."
+        )
+    if step == "confirm":
+        return "Confirma el presupuesto (s) o reedita desde el inicio (n)."
+    return ""
+
+
+async def cmd_presu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    user = update.effective_user
+    if not user:
+        return
+    if context.chat_data is None:
+        await update.message.reply_text("No se pudo iniciar el asistente en este chat.")
+        return
+    context.chat_data[WIZARD_PRESU_KEY] = {
+        "user_id": user.id,
+        "step": "titulo",
+        "data": {},
+    }
+    await update.message.reply_text(
+        _prompt_paso_presu("titulo") + "\n\n/cancelarpresu para abortar."
+    )
+
+
+async def cmd_cancelarpresu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if (context.chat_data or {}).get(WIZARD_PRESU_KEY):
+        _limpiar_wizard_presu(context)
+        await update.message.reply_text("Alta de presupuesto cancelada.")
+    else:
+        await update.message.reply_text("No habia un presupuesto en curso.")
+
+
+async def _avanzar_a_ideas_presu(update: Update, wizard: dict) -> None:
+    wizard["step"] = "ideas"
+    await update.message.reply_text(_prompt_paso_presu("ideas"))
+
+
+async def _preguntar_modo_presu(update: Update, wizard: dict, km: float) -> None:
+    wizard["step"] = "modo"
+    origen = config.PRESU_ORIGEN_DESPLAZAMIENTO
+    await update.message.reply_text(
+        f"Distancia ida estimada: {formatear_numero(km)} km "
+        f"(desde {origen}).\n\n" + _prompt_paso_presu("modo")
+    )
+
+
+async def _tras_desplazamiento_si(update: Update, wizard: dict) -> None:
+    data = wizard["data"]
+    lugar = (data.get("lugar") or "").strip()
+    km: float | None = None
+    if lugar:
+        msg = await update.message.reply_text(
+            f"Calculando distancia desde {config.PRESU_ORIGEN_DESPLAZAMIENTO}..."
+        )
+        km = km_desde_origen(lugar)
+        if km is None:
+            await msg.edit_text(
+                "No pude calcular la distancia. Introduce los km de ida a mano."
+            )
+        else:
+            await msg.delete()
+    if km is not None:
+        data["km_ida"] = km
+        await _preguntar_modo_presu(update, wizard, km)
+        return
+    wizard["step"] = "km_manual"
+    await update.message.reply_text(_prompt_paso_presu("km_manual"))
+
+
+async def _manejar_wizard_presu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    wizard = (context.chat_data or {}).get(WIZARD_PRESU_KEY)
+    if not wizard:
+        return False
+    user = update.effective_user
+    if not user or user.id != wizard.get("user_id"):
+        return False
+
+    texto_raw = (update.message.text or "").strip()
+    if not texto_raw:
+        await update.message.reply_text("Envia texto o /cancelarpresu.")
+        return True
+
+    step: str = wizard["step"]
+    data: dict = wizard["data"]
+    omitir = texto_raw in ("-", "—")
+
+    if step == "titulo":
+        data["titulo"] = "(sin titulo)" if omitir else texto_raw
+        wizard["step"] = "descripcion"
+        await update.message.reply_text(_prompt_paso_presu("descripcion"))
+        return True
+
+    if step == "descripcion":
+        data["descripcion"] = "" if omitir else texto_raw
+        wizard["step"] = "lugar"
+        await update.message.reply_text(_prompt_paso_presu("lugar"))
+        return True
+
+    if step == "lugar":
+        data["lugar"] = "" if omitir else texto_raw
+        wizard["step"] = "necesidades"
+        await update.message.reply_text(_prompt_paso_presu("necesidades"))
+        return True
+
+    if step == "necesidades":
+        data["necesidades_tecnicas"] = "" if omitir else texto_raw
+        wizard["step"] = "jornadas"
+        await update.message.reply_text(_prompt_paso_presu("jornadas"))
+        return True
+
+    if step == "jornadas":
+        if omitir:
+            data["jornadas"] = 0
+        else:
+            n = parsear_entero(texto_raw, -1)
+            if n < 0 or not any(ch.isdigit() for ch in texto_raw):
+                await update.message.reply_text("Jornadas no validas. Numero entero o -.")
+                return True
+            data["jornadas"] = n
+        wizard["step"] = "precio_dia"
+        await update.message.reply_text(_prompt_paso_presu("precio_dia"))
+        return True
+
+    if step == "precio_dia":
+        if omitir:
+            data["precio_dia"] = config.PRESU_PRECIO_DIA_DEFAULT
+        else:
+            val = parsear_float(texto_raw, -1.0)
+            if val < 0 or not any(ch.isdigit() for ch in texto_raw):
+                await update.message.reply_text("Precio/dia no valido. Numero o -.")
+                return True
+            data["precio_dia"] = val
+        wizard["step"] = "desplazamiento"
+        await update.message.reply_text(_prompt_paso_presu("desplazamiento"))
+        return True
+
+    if step == "desplazamiento":
+        if omitir or _es_no_wizard(texto_raw):
+            data["modo_desplazamiento"] = MODO_NINGUNO
+            data["km_ida"] = 0
+            await _avanzar_a_ideas_presu(update, wizard)
+            return True
+        if not _es_si_wizard(texto_raw):
+            await update.message.reply_text("Responde s, n o -.")
+            return True
+        await _tras_desplazamiento_si(update, wizard)
+        return True
+
+    if step == "km_manual":
+        if omitir:
+            data["km_ida"] = 0
+        else:
+            val = parsear_float(texto_raw, -1.0)
+            if val < 0 or not any(ch.isdigit() for ch in texto_raw):
+                await update.message.reply_text("Km no validos. Numero o -.")
+                return True
+            data["km_ida"] = val
+        data["km_manual_hecho"] = True
+        km = parsear_float(str(data.get("km_ida") or 0), 0.0)
+        await _preguntar_modo_presu(update, wizard, km)
+        return True
+
+    if step == "modo":
+        if omitir:
+            if not data.get("km_manual_hecho"):
+                wizard["step"] = "km_manual"
+                data.pop("km_ida", None)
+                await update.message.reply_text(_prompt_paso_presu("km_manual"))
+                return True
+            data["modo_desplazamiento"] = MODO_NINGUNO
+            await _avanzar_a_ideas_presu(update, wizard)
+            return True
+        modo = resolver_modo(texto_raw)
+        if modo is None or modo == MODO_NINGUNO:
+            await update.message.reply_text(
+                "Usa diario, unico o alojamiento (o -)."
+            )
+            return True
+        data["modo_desplazamiento"] = modo
+        if modo == MODO_ALOJAMIENTO:
+            wizard["step"] = "noches"
+            await update.message.reply_text(_prompt_paso_presu("noches"))
+            return True
+        await _avanzar_a_ideas_presu(update, wizard)
+        return True
+
+    if step == "noches":
+        if omitir:
+            data["noches_alojamiento"] = 0
+        else:
+            n = parsear_entero(texto_raw, -1)
+            if n < 0 or not any(ch.isdigit() for ch in texto_raw):
+                await update.message.reply_text("Noches no validas. Entero o -.")
+                return True
+            data["noches_alojamiento"] = n
+        wizard["step"] = "precio_noche"
+        await update.message.reply_text(_prompt_paso_presu("precio_noche"))
+        return True
+
+    if step == "precio_noche":
+        if omitir:
+            data["precio_noche"] = 0
+        else:
+            val = parsear_float(texto_raw, -1.0)
+            if val < 0 or not any(ch.isdigit() for ch in texto_raw):
+                await update.message.reply_text("Precio/noche no valido. Numero o -.")
+                return True
+            data["precio_noche"] = val
+        await _avanzar_a_ideas_presu(update, wizard)
+        return True
+
+    if step == "ideas":
+        ids, err = _parsear_ids_ideas_presu(context, texto_raw)
+        if err:
+            await update.message.reply_text(err)
+            return True
+        data["ids_ideas"] = ids
+        wizard["step"] = "confirm"
+        await update.message.reply_text(
+            "Resumen:\n" + _texto_resumen_wizard_presu(data) + "\n\n"
+            + _prompt_paso_presu("confirm")
+        )
+        return True
+
+    if step == "confirm":
+        if _es_no_wizard(texto_raw):
+            wizard["step"] = "titulo"
+            wizard["data"] = {}
+            await update.message.reply_text(
+                "De acuerdo, empezamos de nuevo.\n" + _prompt_paso_presu("titulo")
+            )
+            return True
+        if not _es_si_wizard(texto_raw):
+            await update.message.reply_text("Responde s para guardar o n para reeditar.")
+            return True
+        try:
+            presu, proyecto, creado = persistir_presupuesto_nuevo(
+                data, list(data.get("ids_ideas") or [])
+            )
+        except ValueError as exc:
+            _limpiar_wizard_presu(context)
+            await update.message.reply_text(str(exc))
+            return True
+        except Exception as exc:
+            await update.message.reply_text(f"No se pudo guardar el presupuesto: {exc}")
+            return True
+        _limpiar_wizard_presu(context)
+        ok_nc, detalle_nc = intentar_sync_notes()
+        extra_proy = " (proyecto creado)" if creado else " (proyecto existente)"
+        if ok_nc:
+            nc_txt = detalle_nc
+        else:
+            nc_txt = (
+                "No se pudo subir ahora a Nextcloud Notes; "
+                "el proximo sync (sync-nextcloud-datos) lo publicara.\n"
+                f"Detalle: {detalle_nc}"
+            )
+        await update.message.reply_text(
+            f"Presupuesto guardado{extra_proy}.\n"
+            f"Proyecto: {proyecto.titulo}\n"
+            f"Total aproximado: {formatear_euros(parsear_float(presu.total_aproximado))}\n"
+            f"Archivo: {presu.ruta}\n"
+            f"{nc_txt}\n\n"
+            f"Usa /listpresu, /verpresu y /modpresu para revisarlo."
+        )
+        return True
+
+    return False
+
+
+def _formatear_presupuesto_completo(p: Presupuesto, cuerpo_md: str) -> str:
+    ids_ideas = listar_ideas_de_presupuesto(p.id)
+    ideas_txt = ", ".join(ids_ideas) if ids_ideas else "(ninguna)"
+    return (
+        f"Titulo: {p.titulo}\n"
+        f"Proyecto id: {p.id_proyecto}\n"
+        f"Lugar: {p.lugar or '(no indicado)'}\n"
+        f"Jornadas: {p.jornadas} x {p.precio_dia} EUR/dia\n"
+        f"Modo desplazamiento: {etiqueta_modo(p.modo_desplazamiento)}\n"
+        f"Km ida: {p.km_ida or '0'}\n"
+        f"Gasolina: {p.coste_desplazamiento} EUR\n"
+        f"Alojamiento: {p.noches_alojamiento} noches / {p.coste_alojamiento} EUR\n"
+        f"Total: {p.total_aproximado} EUR\n"
+        f"Ideas: {ideas_txt}\n"
+        f"Fuente: {p.fuente}\n\n"
+        f"--- Markdown ---\n{cuerpo_md.strip() or '(vacio)'}"
+    )
+
+
+async def cmd_listpresu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    items = leer_presupuestos()
+    if not items:
+        await update.message.reply_text("No hay presupuestos en presupuestos.csv.")
+        return
+    items = sorted(items, key=lambda p: (p.fecha_creacion or "", p.id), reverse=True)
+    if context.chat_data is not None:
+        context.chat_data[CACHE_RM_PRESUPUESTOS] = [p.id for p in items]
+    lineas = [f"{i}. {_formatear_presupuesto_lista(p)}" for i, p in enumerate(items, 1)]
+    cabecera = f"Presupuestos ({len(items)}), mas recientes primero:\n\n"
+    await _reply_texto_largo(update, cabecera + "\n".join(lineas))
+
+
+async def cmd_verpresu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /verpresu <numero>\nEl numero es el de /listpresu en este chat."
+        )
+        return
+    p = _resolver_presupuesto_arg(context, context.args[0].strip())
+    if not p:
+        await update.message.reply_text(
+            "No se encontro ese presupuesto.\nUsa /listpresu en este chat."
+        )
+        return
+    path = _ruta_archivo_presupuesto(p.ruta)
+    try:
+        cuerpo = path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        cuerpo = ""
+    await _reply_texto_largo(update, _formatear_presupuesto_completo(p, cuerpo))
+
+
+async def cmd_rmpresu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _esta_autorizado(update):
+        await _rechazar_no_autorizado(update)
+        return
+    if not context.args:
+        await update.message.reply_text(
+            "Uso: /rmpresu <numero> [numero ...]\n"
+            "Los numeros son los de /listpresu en este chat. No borra el proyecto."
+        )
+        return
+    enteros, otros = _parsear_tokens_rm(list(context.args))
+    if otros:
+        await update.message.reply_text("Solo numeros del listado, separados por espacios.")
+        return
+    cache = (context.chat_data or {}).get(CACHE_RM_PRESUPUESTOS) or []
+    fuera: list[int] = []
+    vistos: set[str] = set()
+    ids_objetivo: list[str] = []
+    for n in enteros:
+        if n < 1 or n > len(cache):
+            fuera.append(n)
+            continue
+        pid = cache[n - 1]
+        if pid not in vistos:
+            vistos.add(pid)
+            ids_objetivo.append(pid)
+    if not ids_objetivo:
+        msg = "Ningun numero valido."
+        if fuera:
+            msg += f" Fuera de rango: {sorted(set(fuera))}. Ejecuta /listpresu en este chat."
+        await update.message.reply_text(msg)
+        return
+
+    ok_n = 0
+    no_md = 0
+    for pid in ids_objetivo:
+        removed = eliminar_presupuesto_por_id(pid)
+        if not removed:
+            continue
+        desvincular_ideas_presupuesto(pid)
+        path = _ruta_archivo_presupuesto(removed.ruta)
+        if path.is_file():
+            try:
+                path.unlink()
+            except OSError:
+                no_md += 1
+        ok_n += 1
+
+    if context.chat_data is not None:
+        context.chat_data.pop(CACHE_RM_PRESUPUESTOS, None)
+    partes = [f"Presupuestos eliminados: {ok_n}."]
     if fuera:
         partes.append(f"Ignorados (fuera de rango): {sorted(set(fuera))}.")
     if no_md:
@@ -4036,6 +4626,8 @@ def _entidad_mod_lista_por_id(kind: str, eid: str):
         return buscar_diario_por_id(eid)
     if kind == "huevo":
         return buscar_huevo_por_id(eid)
+    if kind == "presu":
+        return buscar_presupuesto_por_id(eid)
     return None
 
 
@@ -4060,6 +4652,8 @@ def _guardar_entidad_mod_lista(kind: str, ent) -> bool:
         return actualizar_diario_entrada(ent)
     if kind == "huevo":
         return actualizar_huevo_registro(ent)
+    if kind == "presu":
+        return actualizar_presupuesto(ent)
     return False
 
 
@@ -4266,6 +4860,44 @@ async def _manejar_wizard_mod_lista(
                 ent1 = replace(ent0, fecha=val_raw.strip())
         else:
             ent1 = replace(ent0, **{key: val_raw})
+    elif kind == "presu":
+        if key == "ideas_vinculadas":
+            ids, err_ids = _parsear_ids_ideas_presu(context, text)
+            if err_ids:
+                err = err_ids
+            else:
+                reemplazar_ideas_presupuesto(eid, ids)
+                regenerar_tras_edicion(ent0)
+                wizard["fase"] = "menu"
+                wizard.pop("campo_key", None)
+                n_ok = len(ids)
+                await update.message.reply_text(
+                    f"Ideas vinculadas: {n_ok}.\n\n" + _texto_menu_mod_lista(kind, eid)
+                )
+                return True
+        elif key == "titulo" and not val_raw:
+            err = "El titulo no puede estar vacio."
+        elif key == "modo_desplazamiento":
+            modo = resolver_modo(val_raw) if val_raw else MODO_NINGUNO
+            if val_raw and modo is None:
+                err = "Modo: ninguno, diario, unico, alojamiento."
+            elif modo is not None and modo not in MODOS_DESPLAZAMIENTO_VALIDOS:
+                err = "Modo: ninguno, diario, unico, alojamiento."
+            else:
+                ent1 = replace(ent0, modo_desplazamiento=modo or MODO_NINGUNO)
+        elif key in (
+            "jornadas",
+            "precio_dia",
+            "km_ida",
+            "noches_alojamiento",
+            "coste_alojamiento",
+        ):
+            if val_raw and not any(ch.isdigit() for ch in val_raw):
+                err = "Valor numerico esperado (o '-' para 0)."
+            else:
+                ent1 = replace(ent0, **{key: val_raw or "0"})
+        else:
+            ent1 = replace(ent0, **{key: val_raw})
 
     if err:
         await update.message.reply_text(err)
@@ -4276,10 +4908,15 @@ async def _manejar_wizard_mod_lista(
         context.chat_data.pop(WIZARD_MOD_LISTA_KEY, None)
         return True
 
+    extra = ""
+    if kind == "presu":
+        regenerar_tras_edicion(ent1)
+        extra = " Importes y markdown recalculados."
+
     wizard["fase"] = "menu"
     wizard.pop("campo_key", None)
     await update.message.reply_text(
-        "Campo actualizado.\n\n" + _texto_menu_mod_lista(kind, eid)
+        f"Campo actualizado.{extra}\n\n" + _texto_menu_mod_lista(kind, eid)
     )
     return True
 
@@ -4331,6 +4968,10 @@ async def cmd_moddiario(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def cmd_modhuevo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await _iniciar_mod_lista(update, context, "huevo", "modhuevo")
+
+
+async def cmd_modpresu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await _iniciar_mod_lista(update, context, "presu", "modpresu")
 
 
 def _notas_credenciales(update: Update) -> tuple[str, str] | None:
@@ -6851,6 +7492,8 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     if await _manejar_wizard_mod_proyecto(update, context):
         return
+    if await _manejar_wizard_presu(update, context):
+        return
     if await _manejar_wizard_proyecto(update, context):
         return
     texto = update.message.text or ""
@@ -7341,6 +7984,12 @@ def main() -> None:
     app.add_handler(CommandHandler("rmproyecto", cmd_rmproyecto))
     app.add_handler(CommandHandler("modproyecto", cmd_modproyecto))
     app.add_handler(CommandHandler("cancelarmodproyecto", cmd_cancelarmodproyecto))
+    app.add_handler(CommandHandler("presu", cmd_presu))
+    app.add_handler(CommandHandler("cancelarpresu", cmd_cancelarpresu))
+    app.add_handler(CommandHandler("listpresu", cmd_listpresu))
+    app.add_handler(CommandHandler("verpresu", cmd_verpresu))
+    app.add_handler(CommandHandler("rmpresu", cmd_rmpresu))
+    app.add_handler(CommandHandler("modpresu", cmd_modpresu))
     app.add_handler(CommandHandler("modconvo", cmd_modconvo))
     app.add_handler(CommandHandler("modidea", cmd_modidea))
     app.add_handler(CommandHandler("modmemoria", cmd_modmemoria))
@@ -7464,6 +8113,10 @@ def main() -> None:
         ("rmproyectos", cmd_rmproyecto),
         ("modproy", cmd_modproyecto),
         ("modpy", cmd_modproyecto),
+        ("lspresu", cmd_listpresu),
+        ("vpresu", cmd_verpresu),
+        ("rmps", cmd_rmpresu),
+        ("modps", cmd_modpresu),
         ("lstm", cmd_listtiempo),
         ("vtm", cmd_vertiempo),
         ("lsinvestigaciones", cmd_listinvestigaciones),

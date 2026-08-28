@@ -36,6 +36,10 @@ def sync_nextcloud_datos() -> dict:
         config.CSV_IDEAS,
         "ideas.csv",
     )
+    resultados["contabilidad_csv"] = _subir_csv_si_existe(
+        config.CSV_CONTABILIDAD,
+        "contabilidad.csv",
+    )
     if config.CSV_ENLACES.exists():
         resultados["enlaces_csv"] = _subir_csv_si_existe(
             config.CSV_ENLACES,
@@ -61,10 +65,16 @@ def sync_nextcloud_datos() -> dict:
             config.CSV_FABRICA,
             "fabrica.csv",
         )
-    resultados["contabilidad_csv"] = _subir_csv_si_existe(
-        config.CSV_CONTABILIDAD,
-        "contabilidad.csv",
-    )
+    if config.CSV_PRESUPUESTOS.exists():
+        resultados["presupuestos_csv"] = _subir_csv_si_existe(
+            config.CSV_PRESUPUESTOS,
+            "presupuestos.csv",
+        )
+    if config.CSV_PRESUPUESTOS_IDEAS.exists():
+        resultados["presupuestos_ideas_csv"] = _subir_csv_si_existe(
+            config.CSV_PRESUPUESTOS_IDEAS,
+            "presupuestos_ideas.csv",
+        )
 
     notas_md = sincronizar_markdown_a_nextcloud_notes()
 
@@ -74,7 +84,6 @@ def sync_nextcloud_datos() -> dict:
         "resultados": resultados,
         "notes_md_sync": notas_md,
     }
-
 
 def main() -> None:
     resultado = sync_nextcloud_datos()
